@@ -41,9 +41,6 @@ export function CaptureOverlay({
   const screenW = window.innerWidth;
   const screenH = window.innerHeight;
 
-  // Whether any interaction is happening (hide toolbars during this)
-  const isInteracting = isDragging || isResizing !== null || isMoving;
-
   // Initialize rect when entering selecting phase
   useEffect(() => {
     if (phase === "selecting") {
@@ -396,7 +393,7 @@ export function CaptureOverlay({
             onCancel={onCancel}
             canvasRef={canvasRef}
             rect={rect}
-            visible={!isInteracting}
+            visible={true}
             presets={presets}
             activePreset={activePreset}
             onPresetSelect={handlePresetSelect}
