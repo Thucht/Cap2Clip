@@ -40,7 +40,7 @@ type SessionPhase = "idle" | "selecting" | "annotating" | "settings";
 
 function App() {
   const [phase, setPhase] = useState<SessionPhase>("idle");
-  const [screenshot, setScreenshot] = useState<string | null>(null);
+  const [fullScreenshot, setFullScreenshot] = useState<string | null>(null);
   const [selectionRect, setSelectionRect] = useState<SelectionGeometry | null>(null);
   const [settings, setSettings] = useState<AppSettings>({
     shortcut_region: "PrintScreen",
@@ -65,11 +65,17 @@ function App() {
   useEffect(() => {
     const unlisteners: (() => void)[] = [];
 
-    listen("region-capture", () => {
-      setPhase("selecting");
-      setScreenshot(null);
-      // Restore previous selection if available
-      setSelectionRect(settings.previous_selection || null);
+    listen("region-capture", async () => {
+      try {
+        // Capture full screen immediately when PrtScn is pressed
+        const result = await invoke<{ image_data: string; width: number; height: number }>("capture_full_screen");
+        setFullScreenshot(result.image_data);
+        setPhase("selecting");
+        // Restore previous selection if available
+        setSelectionRect(settings.previous_selection || null);
+      } catch (e) {
+        console.error("Full screen capture failed:", e);
+      }
     }).then((fn) => unlisteners.push(fn));
 
     listen("fullscreen-capture", async () => {
@@ -88,24 +94,13 @@ function App() {
     return () => unlisteners.forEach((fn) => fn());
   }, [settings.previous_selection]);
 
-  const handleSelectionComplete = useCallback(
-    async (rect: SelectionGeometry) => {
-      try {
-        const result = await invoke<{ image_data: string; width: number; height: number }>(
-          "capture_region",
-          { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-        );
-        setScreenshot(result.image_data);
-        setSelectionRect(rect);
-        setPhase("annotating");
-      } catch (e) {
-        console.error("Capture failed:", e);
-        setPhase("idle");
-      }
-    },
-    []
-  );
+  // Selection complete: just enter annotating phase, NO capture
+  const handleEnterAnnotate = useCallback((rect: SelectionGeometry) => {
+    setSelectionRect(rect);
+    setPhase("annotating");
+  }, []);
 
+  // Copy: crop from full screenshot at current rect, apply annotations, copy
   const handleCopy = useCallback(
     async (finalImage: string) => {
       try {
@@ -120,13 +115,14 @@ function App() {
         console.error("Copy failed:", e);
       }
       setPhase("idle");
-      setScreenshot(null);
+      setFullScreenshot(null);
       setSelectionRect(null);
       getCurrentWindow().hide();
     },
     [selectionRect, settings]
   );
 
+  // Save: crop from full screenshot at current rect, apply annotations, save
   const handleSave = useCallback(
     async (finalImage: string) => {
       try {
@@ -134,7 +130,6 @@ function App() {
           dataUrl: finalImage,
           defaultPath: settings.last_save_dir,
         });
-        // Save previous selection and last save dir on successful save
         if (selectionRect && result) {
           const dir = result.substring(0, result.lastIndexOf("\\") + 1) || result.substring(0, result.lastIndexOf("/") + 1);
           const updated = { ...settings, previous_selection: selectionRect, last_save_dir: dir };
@@ -145,7 +140,7 @@ function App() {
         console.error("Save failed:", e);
       }
       setPhase("idle");
-      setScreenshot(null);
+      setFullScreenshot(null);
       setSelectionRect(null);
       getCurrentWindow().hide();
     },
@@ -153,54 +148,51 @@ function App() {
   );
 
   const handleCancel = useCallback(() => {
-    // Cancel does NOT update previous_selection
     setPhase("idle");
-    setScreenshot(null);
+    setFullScreenshot(null);
     setSelectionRect(null);
     getCurrentWindow().hide();
   }, []);
 
-  const handleSaveSettings = useCallback(
-    async (newSettings: AppSettings) => {
-      setSettings(newSettings);
-      try {
-        await invoke("save_settings", { settings: newSettings });
-      } catch (e) {
-        console.error("Failed to save settings:", e);
-      }
-    },
-    []
+  const handleSettingsSave = useCallback(async (newSettings: AppSettings) => {
+    setSettings(newSettings);
+    try {
+      await invoke("save_settings", { settings: newSettings });
+    } catch (e) {
+      console.error("Failed to save settings:", e);
+    }
+    setPhase("idle");
+    getCurrentWindow().hide();
+  }, []);
+
+  return (
+    <div style={{ width: "100%", height: "100%" }}>
+      {(phase === "selecting" || phase === "annotating") && fullScreenshot && (
+        <CaptureOverlay
+          phase={phase}
+          fullScreenshot={fullScreenshot}
+          selectionRect={selectionRect}
+          presets={settings.presets.filter((p) => p.enabled)}
+          onEnterAnnotate={handleEnterAnnotate}
+          onCopy={handleCopy}
+          onSave={handleSave}
+          onCancel={handleCancel}
+          shortcutCopy={settings.shortcut_copy}
+          shortcutSave={settings.shortcut_save}
+        />
+      )}
+
+      {phase === "settings" && (
+        <SettingsPanel
+          settings={settings}
+          onSave={handleSettingsSave}
+          onClose={() => { setPhase("idle"); getCurrentWindow().hide(); }}
+        />
+      )}
+
+      {phase === "idle" && <div className="idle-state" />}
+    </div>
   );
-
-  if (phase === "settings") {
-    return (
-      <SettingsPanel
-        settings={settings}
-        onSave={handleSaveSettings}
-        onClose={() => setPhase("idle")}
-      />
-    );
-  }
-
-  if (phase === "selecting" || phase === "annotating") {
-    return (
-      <CaptureOverlay
-        phase={phase}
-        screenshot={screenshot}
-        selectionRect={selectionRect}
-        presets={settings.presets.filter((p) => p.enabled)}
-        onSelectionComplete={handleSelectionComplete}
-        onCopy={handleCopy}
-        onSave={handleSave}
-        onCancel={handleCancel}
-        shortcutCopy={settings.shortcut_copy}
-        shortcutSave={settings.shortcut_save}
-      />
-    );
-  }
-
-  // Idle: transparent, nothing visible
-  return <div className="idle-state" />;
 }
 
 export default App;

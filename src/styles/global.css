@@ -225,19 +225,34 @@ html, body, #root {
 /* ==================== ANNOTATION TOOLBAR ==================== */
 .annotation-toolbar {
   position: fixed;
-  bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: 4px;
-  background: rgba(20, 20, 20, 0.9);
+  background: rgba(20, 20, 20, 0.92);
   backdrop-filter: blur(20px);
   padding: 6px 10px;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   z-index: 10002;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  transition: left 0.15s ease, top 0.15s ease;
+}
+
+/* Horizontal: drawing tools (snaps above/below selection) */
+.annotation-toolbar-horizontal {
+  flex-direction: row;
+}
+
+/* Vertical: action buttons (snaps left/right of selection) */
+.annotation-toolbar-vertical {
+  flex-direction: column;
+  padding: 10px 6px;
+}
+
+.annotation-toolbar-vertical .toolbar-section.vertical {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .tool-btn {

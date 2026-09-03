@@ -5,10 +5,10 @@ import type { Preset, SelectionGeometry } from "../App";
 
 interface CaptureOverlayProps {
   phase: "selecting" | "annotating";
-  screenshot: string | null;
+  fullScreenshot: string | null;
   selectionRect: SelectionGeometry | null;
   presets: Preset[];
-  onSelectionComplete: (rect: SelectionGeometry) => void;
+  onEnterAnnotate: (rect: SelectionGeometry) => void;
   onCopy: (finalImage: string) => void;
   onSave: (finalImage: string) => void;
   onCancel: () => void;
@@ -18,10 +18,10 @@ interface CaptureOverlayProps {
 
 export function CaptureOverlay({
   phase,
-  screenshot,
+  fullScreenshot,
   selectionRect,
   presets,
-  onSelectionComplete,
+  onEnterAnnotate,
   onCopy,
   onSave,
   onCancel,
@@ -89,10 +89,8 @@ export function CaptureOverlay({
 
   // Mouse down on overlay background
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    // Only start new drag in selecting phase, and only on the overlay background
     if (phase !== "selecting") return;
 
-    // If clicking inside existing rect, let handleMoveStart handle it
     if (rect) {
       const inX = e.clientX >= rect.x && e.clientX <= rect.x + rect.width;
       const inY = e.clientY >= rect.y && e.clientY <= rect.y + rect.height;
@@ -152,12 +150,13 @@ export function CaptureOverlay({
 
   const handleMouseUp = useCallback(() => {
     if (isDragging && rect && rect.width > 5 && rect.height > 5) {
-      onSelectionComplete(rect);
+      // Enter annotating immediately - NO capture, just transition
+      onEnterAnnotate(rect);
     }
     setIsDragging(false);
     setIsResizing(null);
     setIsMoving(false);
-  }, [isDragging, rect, onSelectionComplete]);
+  }, [isDragging, rect, onEnterAnnotate]);
 
   // Resize handle mouse down - works in BOTH phases
   const handleResizeStart = useCallback((handle: string, e: React.MouseEvent) => {
@@ -189,7 +188,6 @@ export function CaptureOverlay({
       const y = Math.max(0, Math.round((screenH - preset.height) / 2));
       newRect = clamp(x, y, preset.width, preset.height);
     } else {
-      // aspect_ratio: fit within 80% of screen
       const maxW = screenW * 0.8;
       const maxH = screenH * 0.8;
       const ratio = preset.width / preset.height;
@@ -206,12 +204,13 @@ export function CaptureOverlay({
 
     setRect(newRect);
 
+    // If already annotating, just update rect (canvas will re-crop)
     if (phase === "annotating") {
-      onSelectionComplete(newRect);
+      onEnterAnnotate(newRect);
     }
-  }, [screenW, screenH, clamp, phase, onSelectionComplete]);
+  }, [screenW, screenH, clamp, phase, onEnterAnnotate]);
 
-  // Actions
+  // Actions - capture happens HERE
   const handleCopyClick = useCallback(() => {
     if (canvasRef.current?.toDataURL) {
       const dataUrl = canvasRef.current.toDataURL({ format: "png", multiplier: 1 });
@@ -298,7 +297,7 @@ export function CaptureOverlay({
             )}
           </div>
 
-          {/* Preset bar - stopPropagation on mousedown to prevent overlay drag */}
+          {/* Preset bar */}
           <div className="preset-bar" onMouseDown={(e) => e.stopPropagation()}>
             <div className="preset-dropdown-wrapper">
               <button
@@ -309,7 +308,7 @@ export function CaptureOverlay({
               </button>
               {showPresetDropdown && (
                 <div className="preset-dropdown-menu" onMouseDown={(e) => e.stopPropagation()}>
-                  {presets.sort((a, b) => a.order - b.order).map((p) => (
+                  {presets.filter(p => p.enabled).sort((a, b) => a.order - b.order).map((p) => (
                     <button
                       key={p.id}
                       className={`preset-dropdown-item ${activePreset?.id === p.id ? "active" : ""}`}
@@ -341,24 +340,23 @@ export function CaptureOverlay({
       )}
 
       {/* ======== ANNOTATING PHASE ======== */}
-      {phase === "annotating" && screenshot && rect && (
+      {phase === "annotating" && fullScreenshot && rect && (
         <>
           {renderBackdrops()}
 
-          {/* Annotation canvas FIRST (lower z-index) */}
+          {/* Annotation canvas - crops from fullScreenshot based on rect */}
           <div
             className="annotation-area"
             style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
           >
             <AnnotationCanvas
               ref={canvasRef}
-              screenshot={screenshot}
-              width={rect.width}
-              height={rect.height}
+              fullScreenshot={fullScreenshot}
+              rect={rect}
             />
           </div>
 
-          {/* Selection border + handles ON TOP of canvas (pointer-events only on handles) */}
+          {/* Selection border + handles ON TOP (pointer-events only on handles) */}
           <div
             className="selection-rect selection-active"
             style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
@@ -368,12 +366,13 @@ export function CaptureOverlay({
             {renderHandles()}
           </div>
 
-          {/* Toolbar with tools + preset selector */}
+          {/* Split toolbars: horizontal (bottom) + vertical (right) */}
           <AnnotationToolbar
             onCopy={handleCopyClick}
             onSave={handleSaveClick}
             onCancel={onCancel}
             canvasRef={canvasRef}
+            rect={rect}
             presets={presets}
             activePreset={activePreset}
             onPresetSelect={handlePresetSelect}
