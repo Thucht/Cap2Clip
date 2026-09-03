@@ -34,7 +34,6 @@ export function CaptureOverlay({
   const [resizeStart, setResizeStart] = useState({ x: 0, y: 0, rect: { x: 0, y: 0, w: 0, h: 0 } });
   const [moveStart, setMoveStart] = useState({ x: 0, y: 0, rectX: 0, rectY: 0 });
   const [activePreset, setActivePreset] = useState<Preset | null>(null);
-  const [showPresetMenu, setShowPresetMenu] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<any>(null);
 
@@ -44,8 +43,8 @@ export function CaptureOverlay({
   // Clamp rect to screen bounds
   const clampRect = useCallback((rect: { x: number; y: number; w: number; h: number }): SelectionGeometry => {
     let { x, y, w, h } = rect;
-    w = Math.max(1, Math.min(w, screenW));
-    h = Math.max(1, Math.min(h, screenH));
+    w = Math.max(10, Math.min(w, screenW));
+    h = Math.max(10, Math.min(h, screenH));
     x = Math.max(0, Math.min(x, screenW - w));
     y = Math.max(0, Math.min(y, screenH - h));
     return { x, y, width: w, height: h };
@@ -54,10 +53,7 @@ export function CaptureOverlay({
   // Get aspect ratio from active preset
   const getAspectRatio = useCallback((): number | null => {
     if (!activePreset || activePreset.type === "free") return null;
-    if (activePreset.type === "aspect_ratio" && activePreset.width > 0 && activePreset.height > 0) {
-      return activePreset.width / activePreset.height;
-    }
-    if (activePreset.type === "fixed_size" && activePreset.width > 0 && activePreset.height > 0) {
+    if (activePreset.width > 0 && activePreset.height > 0) {
       return activePreset.width / activePreset.height;
     }
     return null;
@@ -66,7 +62,6 @@ export function CaptureOverlay({
   // Apply aspect ratio constraint
   const applyAspectRatio = useCallback((w: number, h: number, ratio: number | null): { w: number; h: number } => {
     if (!ratio) return { w, h };
-    // Use the larger dimension as reference
     if (w / h > ratio) {
       w = h * ratio;
     } else {
@@ -75,15 +70,21 @@ export function CaptureOverlay({
     return { w: Math.round(w), h: Math.round(h) };
   }, []);
 
-  // Selection handlers
+  // Handle drag for new selection
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (phase !== "selecting") return;
+      // Only start a new drag if clicking outside the current selection
+      if (currentRect) {
+        const inX = e.clientX >= currentRect.x && e.clientX <= currentRect.x + currentRect.width;
+        const inY = e.clientY >= currentRect.y && e.clientY <= currentRect.y + currentRect.height;
+        if (inX && inY) return; // let move handle it
+      }
       setIsDragging(true);
       setStartPoint({ x: e.clientX, y: e.clientY });
       setCurrentRect({ x: e.clientX, y: e.clientY, width: 0, height: 0 });
     },
-    [phase]
+    [phase, currentRect]
   );
 
   const handleMouseMove = useCallback(
@@ -135,17 +136,13 @@ export function CaptureOverlay({
             break;
         }
 
-        // Apply aspect ratio
         if (ratio) {
           const constrained = applyAspectRatio(newRect.w, newRect.h, ratio);
           newRect.w = constrained.w;
           newRect.h = constrained.h;
         }
-
-        // Ensure positive dimensions
-        if (newRect.w < 1) newRect.w = 1;
-        if (newRect.h < 1) newRect.h = 1;
-
+        if (newRect.w < 10) newRect.w = 10;
+        if (newRect.h < 10) newRect.h = 10;
         setCurrentRect(clampRect(newRect));
       } else if (isMoving && currentRect) {
         const dx = e.clientX - moveStart.x;
@@ -174,12 +171,13 @@ export function CaptureOverlay({
 
   const handleMouseUp = useCallback(() => {
     if (isDragging && currentRect && currentRect.width > 5 && currentRect.height > 5) {
-      // Selection complete - don't auto-transition, wait for user to confirm
+      // Auto-apply: immediately proceed to capture
+      onSelectionComplete(currentRect);
     }
     setIsDragging(false);
     setIsResizing(null);
     setIsMoving(false);
-  }, [isDragging, currentRect]);
+  }, [isDragging, currentRect, onSelectionComplete]);
 
   // Handle resize start
   const handleResizeStart = useCallback(
@@ -213,61 +211,34 @@ export function CaptureOverlay({
     [phase, currentRect]
   );
 
-  // Confirm selection
-  const confirmSelection = useCallback(() => {
-    if (currentRect && currentRect.width > 5 && currentRect.height > 5) {
-      onSelectionComplete(currentRect);
-    }
-  }, [currentRect, onSelectionComplete]);
-
-  // Preset selection
+  // Preset selection - apply immediately during selecting phase
   const handlePresetSelect = useCallback((preset: Preset) => {
     setActivePreset(preset);
-    setShowPresetMenu(false);
+
+    if (preset.type === "free") {
+      // Keep current rect, just remove ratio constraint
+      return;
+    }
 
     if (preset.type === "fixed_size") {
-      // Center the fixed-size rect on screen
       const x = Math.max(0, Math.round((screenW - preset.width) / 2));
       const y = Math.max(0, Math.round((screenH - preset.height) / 2));
       setCurrentRect(clampRect({ x, y, w: preset.width, h: preset.height }));
     } else if (preset.type === "aspect_ratio") {
-      // Set a reasonable initial size with the aspect ratio
       const initialW = Math.min(800, screenW - 100);
       const initialH = initialW * (preset.height / preset.width);
       const x = Math.max(0, Math.round((screenW - initialW) / 2));
       const y = Math.max(0, Math.round((screenH - initialH) / 2));
       setCurrentRect(clampRect({ x, y, w: Math.round(initialW), h: Math.round(initialH) }));
-    } else {
-      // Free - clear any constraint
-      setCurrentRect(null);
     }
   }, [screenW, screenH, clampRect]);
 
-  // Keyboard shortcuts during capture
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (phase === "annotating") {
-        // Ctrl+C / Cmd+C → Copy
-        if ((e.ctrlKey || e.metaKey) && e.key === "c") {
-          e.preventDefault();
-          handleCopyClick();
-        }
-        // Ctrl+S / Cmd+S → Save
-        if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-          e.preventDefault();
-          handleSaveClick();
-        }
-      }
-      // Escape → Cancel
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onCancel();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [phase, onCancel]);
+  // Handle capture/annotate after selecting via preset
+  const handleConfirmFromPreset = useCallback(() => {
+    if (currentRect && currentRect.width > 5 && currentRect.height > 5) {
+      onSelectionComplete(currentRect);
+    }
+  }, [currentRect, onSelectionComplete]);
 
   const handleCopyClick = useCallback(() => {
     if (canvasRef.current?.toDataURL) {
@@ -283,7 +254,34 @@ export function CaptureOverlay({
     }
   }, [onSave]);
 
-  // Render backdrop pieces around selection
+  // Keyboard shortcuts during capture/annotation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (phase === "annotating") {
+        if ((e.ctrlKey || e.metaKey) && e.key === "c") {
+          e.preventDefault();
+          handleCopyClick();
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+          e.preventDefault();
+          handleSaveClick();
+        }
+      }
+      // Enter: confirm preset selection
+      if (phase === "selecting" && e.key === "Enter" && currentRect && currentRect.width > 5) {
+        e.preventDefault();
+        handleConfirmFromPreset();
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCancel();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [phase, currentRect, handleCopyClick, handleSaveClick, handleConfirmFromPreset, onCancel]);
+
   const renderBackdrops = () => {
     if (!currentRect) return null;
     const { x, y, width: w, height: h } = currentRect;
@@ -315,34 +313,33 @@ export function CaptureOverlay({
           {/* Hint */}
           <div className="capture-hint">
             {currentRect
-              ? `${currentRect.width} × ${currentRect.height}`
-              : "Drag to select region • Choose a preset below"}
+              ? `${currentRect.width} × ${currentRect.height} • Drag inside to move • Drag edges to resize • Enter to confirm`
+              : "Click and drag to select region • Or choose a preset below"}
           </div>
 
           {/* Preset selector */}
           <div className="preset-selector">
-            <button
-              className="preset-toggle-btn"
-              onClick={(e) => { e.stopPropagation(); setShowPresetMenu(!showPresetMenu); }}
+            <select
+              className="preset-select-input"
+              value={activePreset?.id || ""}
+              onChange={(e) => {
+                const p = presets.find((pp) => pp.id === e.target.value);
+                if (p) handlePresetSelect(p);
+              }}
             >
-              {activePreset ? activePreset.name : "Presets ▾"}
-            </button>
-            {showPresetMenu && (
-              <div className="preset-dropdown" onClick={(e) => e.stopPropagation()}>
-                {presets
-                  .sort((a, b) => a.order - b.order)
-                  .map((p) => (
-                    <button
-                      key={p.id}
-                      className={`preset-item ${activePreset?.id === p.id ? "active" : ""}`}
-                      onClick={() => handlePresetSelect(p)}
-                    >
-                      {p.name}
-                      {p.type === "aspect_ratio" && <span className="preset-type">ratio</span>}
-                      {p.type === "fixed_size" && <span className="preset-type">px</span>}
-                    </button>
-                  ))}
-              </div>
+              <option value="">Choose preset...</option>
+              {presets.sort((a, b) => a.order - b.order).map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            {activePreset && currentRect && (
+              <button
+                className="preset-confirm-btn"
+                onClick={handleConfirmFromPreset}
+                title="Confirm selection (Enter)"
+              >
+                ✓ Capture
+              </button>
             )}
           </div>
 
@@ -370,30 +367,31 @@ export function CaptureOverlay({
                   onMouseDown={(e) => handleResizeStart(h, e)}
                 />
               ))}
-
-              {/* Confirm button */}
-              <button
-                className="confirm-selection-btn"
-                onClick={(e) => { e.stopPropagation(); confirmSelection(); }}
-                onMouseDown={(e) => e.stopPropagation()}
-              >
-                ✓
-              </button>
             </div>
           )}
         </>
       )}
 
       {phase === "annotating" && screenshot && initialRect && (
-        <div className="annotation-container">
+        <>
           {renderBackdrops()}
 
-          <AnnotationCanvas
-            ref={canvasRef}
-            screenshot={screenshot}
-            width={initialRect.width}
-            height={initialRect.height}
-          />
+          <div
+            className="annotation-area"
+            style={{
+              left: initialRect.x,
+              top: initialRect.y,
+              width: initialRect.width,
+              height: initialRect.height,
+            }}
+          >
+            <AnnotationCanvas
+              ref={canvasRef}
+              screenshot={screenshot}
+              width={initialRect.width}
+              height={initialRect.height}
+            />
+          </div>
 
           <AnnotationToolbar
             onCopy={handleCopyClick}
@@ -401,7 +399,7 @@ export function CaptureOverlay({
             onCancel={onCancel}
             canvasRef={canvasRef}
           />
-        </div>
+        </>
       )}
     </div>
   );

@@ -52,9 +52,24 @@ pub fn capture_region(x: u32, y: u32, width: u32, height: u32) -> Result<Capture
 
     let image = screen.capture().map_err(|e| e.to_string())?;
 
-    // Crop the region using imageops
+    // Inset by 1px on each side to avoid picking up the selection border
+    let img_w = image.width();
+    let img_h = image.height();
+
+    // Apply inset: shift crop origin +1,1 and reduce dimensions by 2x2
+    let crop_x = x.saturating_add(1);
+    let crop_y = y.saturating_add(1);
+    let crop_w = width.saturating_sub(2).max(1);
+    let crop_h = height.saturating_sub(2).max(1);
+
+    // Clamp to image bounds
+    let max_w = img_w.saturating_sub(crop_x);
+    let max_h = img_h.saturating_sub(crop_y);
+    let crop_w = crop_w.min(max_w).max(1);
+    let crop_h = crop_h.min(max_h).max(1);
+
     use screenshots::image::imageops::crop_imm;
-    let cropped = crop_imm(&image, x, y, width, height);
+    let cropped = crop_imm(&image, crop_x, crop_y, crop_w, crop_h);
 
     let mut buffer = Cursor::new(Vec::new());
     cropped
@@ -67,10 +82,10 @@ pub fn capture_region(x: u32, y: u32, width: u32, height: u32) -> Result<Capture
 
     Ok(CaptureResult {
         image_data: format!("data:image/png;base64,{}", base64_str),
-        width,
-        height,
-        x: x as i32,
-        y: y as i32,
+        width: crop_w,
+        height: crop_h,
+        x: crop_x as i32,
+        y: crop_y as i32,
     })
 }
 
