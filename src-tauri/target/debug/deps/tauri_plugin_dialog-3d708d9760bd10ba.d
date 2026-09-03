@@ -1,0 +1,10 @@
+E:\lightshot-clone\src-tauri\target\debug\deps\tauri_plugin_dialog-3d708d9760bd10ba.d: C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.3\src\lib.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.3\src\desktop.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.3\src\commands.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.3\src\error.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.3\src\models.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.3\src\init-iife.js
+
+E:\lightshot-clone\src-tauri\target\debug\deps\libtauri_plugin_dialog-3d708d9760bd10ba.rmeta: C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.3\src\lib.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.3\src\desktop.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.3\src\commands.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.3\src\error.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.3\src\models.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.3\src\init-iife.js
+
+C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.3\src\lib.rs:
+C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.3\src\desktop.rs:
+C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.3\src\commands.rs:
+C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.3\src\error.rs:
+C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.3\src\models.rs:
+C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-dialog-2.7.3\src\init-iife.js:

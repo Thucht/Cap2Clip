@@ -1,0 +1,11 @@
+E:\lightshot-clone\src-tauri\target\debug\deps\tauri_plugin_fs-7a0550e0b0bcb7a5.d: C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\lib.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\commands.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\config.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\desktop.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\error.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\file_path.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\scope.rs
+
+E:\lightshot-clone\src-tauri\target\debug\deps\libtauri_plugin_fs-7a0550e0b0bcb7a5.rmeta: C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\lib.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\commands.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\config.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\desktop.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\error.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\file_path.rs C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\scope.rs
+
+C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\lib.rs:
+C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\commands.rs:
+C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\config.rs:
+C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\desktop.rs:
+C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\error.rs:
+C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\file_path.rs:
+C:\Users\hoang\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\tauri-plugin-fs-2.5.2\src\scope.rs:

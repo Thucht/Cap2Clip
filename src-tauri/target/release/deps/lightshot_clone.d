@@ -1,0 +1,21 @@
+E:\lightshot-clone\src-tauri\target\release\deps\lightshot_clone.d: src\main.rs src\capture.rs src\presets.rs src\clipboard.rs E:\lightshot-clone\src-tauri\target\release\build\lightshot-clone-c77f9d4065fabd00\out/78ad38fd9af9730aabcf352fbc6d60410505db5cd25e68c5bf7e1f4f7efafb76 E:\lightshot-clone\src-tauri\target\release\build\lightshot-clone-c77f9d4065fabd00\out/c906a4ed74a8968c0a51a727b8a5b8e872a2e8a99ece4400e5989670763b272f E:\lightshot-clone\src-tauri\../dist\assets\index-CQc0aIbn.js \\?\E:\lightshot-clone\src-tauri\target\release\build\lightshot-clone-c77f9d4065fabd00\out\tauri-codegen-assets\8fdc7916806ab8473ebdbb57c8f6f9c2ca5a6ee9b146b1b6fecff6f71aa16cfb.js E:\lightshot-clone\src-tauri\../dist\index.html \\?\E:\lightshot-clone\src-tauri\target\release\build\lightshot-clone-c77f9d4065fabd00\out\tauri-codegen-assets\04d6c6796f6cc8791fe1fd4e8327e05f32638987de92d5a938458e0cfedf4680.html E:\lightshot-clone\src-tauri\../dist\assets\index-C0XLxEx-.css \\?\E:\lightshot-clone\src-tauri\target\release\build\lightshot-clone-c77f9d4065fabd00\out\tauri-codegen-assets\49c8d20df0b28725a27bdf7ec19cb2d9588b9a1e454495b9af8b205824ae5900.css
+
+E:\lightshot-clone\src-tauri\target\release\deps\lightshot_clone.exe: src\main.rs src\capture.rs src\presets.rs src\clipboard.rs E:\lightshot-clone\src-tauri\target\release\build\lightshot-clone-c77f9d4065fabd00\out/78ad38fd9af9730aabcf352fbc6d60410505db5cd25e68c5bf7e1f4f7efafb76 E:\lightshot-clone\src-tauri\target\release\build\lightshot-clone-c77f9d4065fabd00\out/c906a4ed74a8968c0a51a727b8a5b8e872a2e8a99ece4400e5989670763b272f E:\lightshot-clone\src-tauri\../dist\assets\index-CQc0aIbn.js \\?\E:\lightshot-clone\src-tauri\target\release\build\lightshot-clone-c77f9d4065fabd00\out\tauri-codegen-assets\8fdc7916806ab8473ebdbb57c8f6f9c2ca5a6ee9b146b1b6fecff6f71aa16cfb.js E:\lightshot-clone\src-tauri\../dist\index.html \\?\E:\lightshot-clone\src-tauri\target\release\build\lightshot-clone-c77f9d4065fabd00\out\tauri-codegen-assets\04d6c6796f6cc8791fe1fd4e8327e05f32638987de92d5a938458e0cfedf4680.html E:\lightshot-clone\src-tauri\../dist\assets\index-C0XLxEx-.css \\?\E:\lightshot-clone\src-tauri\target\release\build\lightshot-clone-c77f9d4065fabd00\out\tauri-codegen-assets\49c8d20df0b28725a27bdf7ec19cb2d9588b9a1e454495b9af8b205824ae5900.css
+
+src\main.rs:
+src\capture.rs:
+src\presets.rs:
+src\clipboard.rs:
+E:\lightshot-clone\src-tauri\target\release\build\lightshot-clone-c77f9d4065fabd00\out/78ad38fd9af9730aabcf352fbc6d60410505db5cd25e68c5bf7e1f4f7efafb76:
+E:\lightshot-clone\src-tauri\target\release\build\lightshot-clone-c77f9d4065fabd00\out/c906a4ed74a8968c0a51a727b8a5b8e872a2e8a99ece4400e5989670763b272f:
+E:\lightshot-clone\src-tauri\../dist\assets\index-CQc0aIbn.js:
+\\?\E:\lightshot-clone\src-tauri\target\release\build\lightshot-clone-c77f9d4065fabd00\out\tauri-codegen-assets\8fdc7916806ab8473ebdbb57c8f6f9c2ca5a6ee9b146b1b6fecff6f71aa16cfb.js:
+E:\lightshot-clone\src-tauri\../dist\index.html:
+\\?\E:\lightshot-clone\src-tauri\target\release\build\lightshot-clone-c77f9d4065fabd00\out\tauri-codegen-assets\04d6c6796f6cc8791fe1fd4e8327e05f32638987de92d5a938458e0cfedf4680.html:
+E:\lightshot-clone\src-tauri\../dist\assets\index-C0XLxEx-.css:
+\\?\E:\lightshot-clone\src-tauri\target\release\build\lightshot-clone-c77f9d4065fabd00\out\tauri-codegen-assets\49c8d20df0b28725a27bdf7ec19cb2d9588b9a1e454495b9af8b205824ae5900.css:
+
+# env-dep:CARGO_PKG_AUTHORS=you
+# env-dep:CARGO_PKG_DESCRIPTION=A Lightshot-like screenshot capture and annotation tool
+# env-dep:CARGO_PKG_NAME=lightshot-clone
+# env-dep:OUT_DIR=E:\\lightshot-clone\\src-tauri\\target\\release\\build\\lightshot-clone-c77f9d4065fabd00\\out
