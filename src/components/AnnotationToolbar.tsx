@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import { PencilBrush } from "fabric";
 import type { Canvas } from "fabric";
+import type { Preset } from "../App";
 
 type Tool = "select" | "pen" | "line" | "arrow" | "rect" | "ellipse" | "highlight" | "blur" | "text";
 
@@ -9,6 +10,9 @@ interface AnnotationToolbarProps {
   onSave: () => void;
   onCancel: () => void;
   canvasRef: React.MutableRefObject<any>;
+  presets?: Preset[];
+  activePreset?: Preset | null;
+  onPresetSelect?: (preset: Preset) => void;
 }
 
 const COLORS = [
@@ -19,7 +23,7 @@ const COLORS = [
 const STROKE_WIDTHS = [2, 3, 5, 8];
 const FONT_SIZES = [14, 18, 24, 32, 48];
 
-export function AnnotationToolbar({ onCopy, onSave, onCancel, canvasRef }: AnnotationToolbarProps) {
+export function AnnotationToolbar({ onCopy, onSave, onCancel, canvasRef, presets = [], activePreset, onPresetSelect }: AnnotationToolbarProps) {
   const [activeTool, setActiveTool] = useState<Tool>("pen");
   const [color, setColor] = useState("#ff0000");
   const [strokeWidth, setStrokeWidth] = useState(3);
@@ -68,7 +72,6 @@ export function AnnotationToolbar({ onCopy, onSave, onCancel, canvasRef }: Annot
 
     setActiveTool(tool);
 
-    // Reset canvas mode
     canvas.isDrawingMode = false;
     canvas.selection = tool === "select";
     canvas.defaultCursor = tool === "select" ? "default" : "crosshair";
@@ -85,8 +88,6 @@ export function AnnotationToolbar({ onCopy, onSave, onCancel, canvasRef }: Annot
       canvas.defaultCursor = "text";
     }
   }, [color, strokeWidth]);
-
-
 
   const handleDelete = useCallback(() => {
     const canvas = getCanvas();
@@ -213,12 +214,38 @@ export function AnnotationToolbar({ onCopy, onSave, onCancel, canvasRef }: Annot
 
       <div className="toolbar-divider" />
 
+      {/* Preset selector for quick resize */}
+      {presets.length > 0 && (
+        <>
+          <div className="toolbar-section">
+            <select
+              className="preset-select-toolbar"
+              value={activePreset?.id || ""}
+              onChange={(e) => {
+                const p = presets.find((pp) => pp.id === e.target.value);
+                if (p && onPresetSelect) {
+                  onPresetSelect(p);
+                }
+              }}
+              title="Quick resize preset"
+            >
+              <option value="">📐 Resize</option>
+              {presets.sort((a, b) => a.order - b.order).map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="toolbar-divider" />
+        </>
+      )}
+
       {/* Action buttons */}
       <div className="toolbar-section actions">
-        <button className="action-btn copy" onClick={onCopy} title="Copy to clipboard">
+        <button className="action-btn copy" onClick={onCopy} title="Copy to clipboard (Ctrl+C)">
           📋 Copy
         </button>
-        <button className="action-btn save" onClick={onSave} title="Save as PNG">
+        <button className="action-btn save" onClick={onSave} title="Save as PNG (Ctrl+S)">
           💾 Save
         </button>
         <button className="action-btn cancel" onClick={onCancel} title="Cancel (Esc)">

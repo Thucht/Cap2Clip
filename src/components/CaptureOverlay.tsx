@@ -28,7 +28,7 @@ export function CaptureOverlay({
 }: CaptureOverlayProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [startPoint, setStartPoint] = useState({ x: 0, y: 0 });
-  const [currentRect, setCurrentRect] = useState<SelectionGeometry | null>(initialRect);
+  const [currentRect, setCurrentRect] = useState<SelectionGeometry | null>(null);
   const [isResizing, setIsResizing] = useState<string | null>(null);
   const [isMoving, setIsMoving] = useState(false);
   const [resizeStart, setResizeStart] = useState({ x: 0, y: 0, rect: { x: 0, y: 0, w: 0, h: 0 } });
@@ -60,7 +60,8 @@ export function CaptureOverlay({
   }, [activePreset]);
 
   // Apply aspect ratio constraint
-  const applyAspectRatio = useCallback((w: number, h: number, ratio: number | null): { w: number; h: number } => {
+  const applyAspectRatio = useCallback((w: number, h: number): { w: number; h: number } => {
+    const ratio = getAspectRatio();
     if (!ratio) return { w, h };
     if (w / h > ratio) {
       w = h * ratio;
@@ -68,35 +69,27 @@ export function CaptureOverlay({
       h = w / ratio;
     }
     return { w: Math.round(w), h: Math.round(h) };
-  }, []);
+  }, [getAspectRatio]);
 
-  // Handle drag for new selection
+  // Start drag for new selection
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      if (phase !== "selecting") return;
-      // Only start a new drag if clicking outside the current selection
-      if (currentRect) {
-        const inX = e.clientX >= currentRect.x && e.clientX <= currentRect.x + currentRect.width;
-        const inY = e.clientY >= currentRect.y && e.clientY <= currentRect.y + currentRect.height;
-        if (inX && inY) return; // let move handle it
+      if (phase === "selecting") {
+        setIsDragging(true);
+        setStartPoint({ x: e.clientX, y: e.clientY });
+        setCurrentRect({ x: e.clientX, y: e.clientY, width: 0, height: 0 });
       }
-      setIsDragging(true);
-      setStartPoint({ x: e.clientX, y: e.clientY });
-      setCurrentRect({ x: e.clientX, y: e.clientY, width: 0, height: 0 });
     },
-    [phase, currentRect]
+    [phase]
   );
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      if (phase !== "selecting") return;
-
+      // Resizing in both selecting and annotating phases
       if (isResizing && currentRect) {
         const dx = e.clientX - resizeStart.x;
         const dy = e.clientY - resizeStart.y;
         const r = resizeStart.rect;
-        const ratio = getAspectRatio();
-
         let newRect = { ...r };
 
         switch (isResizing) {
@@ -136,8 +129,9 @@ export function CaptureOverlay({
             break;
         }
 
+        const ratio = getAspectRatio();
         if (ratio) {
-          const constrained = applyAspectRatio(newRect.w, newRect.h, ratio);
+          const constrained = applyAspectRatio(newRect.w, newRect.h);
           newRect.w = constrained.w;
           newRect.h = constrained.h;
         }
@@ -145,12 +139,13 @@ export function CaptureOverlay({
         if (newRect.h < 10) newRect.h = 10;
         setCurrentRect(clampRect(newRect));
       } else if (isMoving && currentRect) {
+        // Moving in both phases
         const dx = e.clientX - moveStart.x;
         const dy = e.clientY - moveStart.y;
         const newX = moveStart.rectX + dx;
         const newY = moveStart.rectY + dy;
         setCurrentRect(clampRect({ x: newX, y: newY, w: currentRect.width, h: currentRect.height }));
-      } else if (isDragging) {
+      } else if (isDragging && phase === "selecting") {
         const x = Math.min(startPoint.x, e.clientX);
         const y = Math.min(startPoint.y, e.clientY);
         let w = Math.abs(e.clientX - startPoint.x);
@@ -158,7 +153,7 @@ export function CaptureOverlay({
 
         const ratio = getAspectRatio();
         if (ratio) {
-          const constrained = applyAspectRatio(w, h, ratio);
+          const constrained = applyAspectRatio(w, h);
           w = constrained.w;
           h = constrained.h;
         }
@@ -166,12 +161,12 @@ export function CaptureOverlay({
         setCurrentRect(clampRect({ x, y, w, h }));
       }
     },
-    [phase, isDragging, isResizing, isMoving, startPoint, resizeStart, moveStart, currentRect, getAspectRatio, applyAspectRatio, clampRect]
+    [isDragging, isResizing, isMoving, startPoint, resizeStart, moveStart, currentRect, phase, getAspectRatio, applyAspectRatio, clampRect]
   );
 
   const handleMouseUp = useCallback(() => {
     if (isDragging && currentRect && currentRect.width > 5 && currentRect.height > 5) {
-      // Auto-apply: immediately proceed to capture
+      // Immediately go to annotating phase
       onSelectionComplete(currentRect);
     }
     setIsDragging(false);
@@ -179,7 +174,7 @@ export function CaptureOverlay({
     setIsMoving(false);
   }, [isDragging, currentRect, onSelectionComplete]);
 
-  // Handle resize start
+  // Handle resize start - works in both phases
   const handleResizeStart = useCallback(
     (handle: string, e: React.MouseEvent) => {
       e.stopPropagation();
@@ -195,10 +190,10 @@ export function CaptureOverlay({
     [currentRect]
   );
 
-  // Handle move start
+  // Handle move start - works in both phases
   const handleMoveStart = useCallback(
     (e: React.MouseEvent) => {
-      if (phase !== "selecting" || !currentRect) return;
+      if (!currentRect) return;
       e.stopPropagation();
       setIsMoving(true);
       setMoveStart({
@@ -208,37 +203,53 @@ export function CaptureOverlay({
         rectY: currentRect.y,
       });
     },
-    [phase, currentRect]
+    [currentRect]
   );
 
-  // Preset selection - apply immediately during selecting phase
+  // Preset selection - apply immediately, trigger re-capture
   const handlePresetSelect = useCallback((preset: Preset) => {
     setActivePreset(preset);
 
     if (preset.type === "free") {
-      // Keep current rect, just remove ratio constraint
       return;
     }
 
+    let newRect: SelectionGeometry;
     if (preset.type === "fixed_size") {
       const x = Math.max(0, Math.round((screenW - preset.width) / 2));
       const y = Math.max(0, Math.round((screenH - preset.height) / 2));
-      setCurrentRect(clampRect({ x, y, w: preset.width, h: preset.height }));
-    } else if (preset.type === "aspect_ratio") {
+      newRect = clampRect({ x, y, w: preset.width, h: preset.height });
+    } else {
       const initialW = Math.min(800, screenW - 100);
       const initialH = initialW * (preset.height / preset.width);
       const x = Math.max(0, Math.round((screenW - initialW) / 2));
       const y = Math.max(0, Math.round((screenH - initialH) / 2));
-      setCurrentRect(clampRect({ x, y, w: Math.round(initialW), h: Math.round(initialH) }));
+      newRect = clampRect({ x, y, w: Math.round(initialW), h: Math.round(initialH) });
     }
-  }, [screenW, screenH, clampRect]);
 
-  // Handle capture/annotate after selecting via preset
-  const handleConfirmFromPreset = useCallback(() => {
-    if (currentRect && currentRect.width > 5 && currentRect.height > 5) {
-      onSelectionComplete(currentRect);
+    setCurrentRect(newRect);
+
+    // If already annotating, re-trigger capture with new rect
+    if (phase === "annotating") {
+      onSelectionComplete(newRect);
     }
-  }, [currentRect, onSelectionComplete]);
+  }, [screenW, screenH, clampRect, phase, onSelectionComplete]);
+
+  // Initialize rect from previous selection or preset
+  useEffect(() => {
+    if (phase === "selecting" && !currentRect && !isDragging) {
+      // Check if there's a previous selection from settings
+      const saved = localStorage.getItem("lastSelection");
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          setCurrentRect(clampRect(parsed));
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+  }, [phase, currentRect, isDragging, clampRect]);
 
   const handleCopyClick = useCallback(() => {
     if (canvasRef.current?.toDataURL) {
@@ -254,7 +265,7 @@ export function CaptureOverlay({
     }
   }, [onSave]);
 
-  // Keyboard shortcuts during capture/annotation
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (phase === "annotating") {
@@ -267,11 +278,6 @@ export function CaptureOverlay({
           handleSaveClick();
         }
       }
-      // Enter: confirm preset selection
-      if (phase === "selecting" && e.key === "Enter" && currentRect && currentRect.width > 5) {
-        e.preventDefault();
-        handleConfirmFromPreset();
-      }
       if (e.key === "Escape") {
         e.preventDefault();
         onCancel();
@@ -280,11 +286,19 @@ export function CaptureOverlay({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [phase, currentRect, handleCopyClick, handleSaveClick, handleConfirmFromPreset, onCancel]);
+  }, [phase, handleCopyClick, handleSaveClick, onCancel]);
+
+  // Sync currentRect with initialRect when entering annotating phase
+  useEffect(() => {
+    if (phase === "annotating" && initialRect) {
+      setCurrentRect(initialRect);
+    }
+  }, [phase, initialRect]);
 
   const renderBackdrops = () => {
-    if (!currentRect) return null;
-    const { x, y, width: w, height: h } = currentRect;
+    const rect = phase === "annotating" ? initialRect : currentRect;
+    if (!rect) return null;
+    const { x, y, width: w, height: h } = rect;
     return (
       <>
         <div className="backdrop" style={{ top: 0, left: 0, right: 0, height: y }} />
@@ -297,6 +311,8 @@ export function CaptureOverlay({
 
   const handles = ["nw", "n", "ne", "w", "e", "sw", "s", "se"];
 
+  const rect = phase === "annotating" ? initialRect : currentRect;
+
   return (
     <div
       className="capture-overlay"
@@ -306,6 +322,7 @@ export function CaptureOverlay({
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
     >
+      {/* Selecting phase */}
       {phase === "selecting" && (
         <>
           {renderBackdrops()}
@@ -313,12 +330,12 @@ export function CaptureOverlay({
           {/* Hint */}
           <div className="capture-hint">
             {currentRect
-              ? `${currentRect.width} × ${currentRect.height} • Drag inside to move • Drag edges to resize • Enter to confirm`
-              : "Click and drag to select region • Or choose a preset below"}
+              ? `${currentRect.width} × ${currentRect.height} • Drag inside to move • Drag edges to resize`
+              : "Click and drag to select region • Or choose a preset"}
           </div>
 
-          {/* Preset selector */}
-          <div className="preset-selector">
+          {/* Preset quick selector */}
+          <div className="preset-bar">
             <select
               className="preset-select-input"
               value={activePreset?.id || ""}
@@ -327,20 +344,11 @@ export function CaptureOverlay({
                 if (p) handlePresetSelect(p);
               }}
             >
-              <option value="">Choose preset...</option>
+              <option value="">Preset...</option>
               {presets.sort((a, b) => a.order - b.order).map((p) => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
             </select>
-            {activePreset && currentRect && (
-              <button
-                className="preset-confirm-btn"
-                onClick={handleConfirmFromPreset}
-                title="Confirm selection (Enter)"
-              >
-                ✓ Capture
-              </button>
-            )}
           </div>
 
           {/* Selection rectangle */}
@@ -372,32 +380,62 @@ export function CaptureOverlay({
         </>
       )}
 
-      {phase === "annotating" && screenshot && initialRect && (
+      {/* Annotating phase */}
+      {phase === "annotating" && screenshot && rect && (
         <>
           {renderBackdrops()}
 
+          {/* Selection overlay - can still resize/move */}
+          <div
+            className="selection-rect selection-active"
+            style={{
+              left: rect.x,
+              top: rect.y,
+              width: rect.width,
+              height: rect.height,
+            }}
+            onMouseDown={handleMoveStart}
+          >
+            <div className="selection-size">
+              {rect.width} × {rect.height}
+            </div>
+
+            {handles.map((h) => (
+              <div
+                key={h}
+                className={`handle handle-${h}`}
+                onMouseDown={(e) => handleResizeStart(h, e)}
+              />
+            ))}
+          </div>
+
+          {/* Annotation area */}
           <div
             className="annotation-area"
             style={{
-              left: initialRect.x,
-              top: initialRect.y,
-              width: initialRect.width,
-              height: initialRect.height,
+              left: rect.x,
+              top: rect.y,
+              width: rect.width,
+              height: rect.height,
             }}
           >
             <AnnotationCanvas
               ref={canvasRef}
               screenshot={screenshot}
-              width={initialRect.width}
-              height={initialRect.height}
+              width={rect.width}
+              height={rect.height}
             />
           </div>
 
+          {/* Toolbar with preset selector */}
           <AnnotationToolbar
             onCopy={handleCopyClick}
             onSave={handleSaveClick}
             onCancel={onCancel}
             canvasRef={canvasRef}
+            presets={presets}
+            activePreset={activePreset}
+            onPresetSelect={handlePresetSelect}
           />
         </>
       )}
