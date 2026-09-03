@@ -2,12 +2,47 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum PresetType {
+    AspectRatio,
+    FixedSize,
+    Free,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Preset {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub preset_type: PresetType,
+    pub width: u32,
+    pub height: u32,
+    pub aspect_ratio: Option<String>, // e.g. "16:9"
+    pub enabled: bool,
+    pub order: u32,
+    pub is_builtin: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SelectionGeometry {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     pub shortcut_region: String,
     pub shortcut_fullscreen: String,
+    pub shortcut_copy: String,
+    pub shortcut_save: String,
+    pub shortcut_cancel: String,
     pub shortcuts_enabled: bool,
     pub last_save_dir: String,
+    pub previous_selection: Option<SelectionGeometry>,
+    pub presets: Vec<Preset>,
 }
 
 impl Default for AppSettings {
@@ -21,10 +56,199 @@ impl Default for AppSettings {
         Self {
             shortcut_region: "PrintScreen".to_string(),
             shortcut_fullscreen: "Shift+PrintScreen".to_string(),
+            shortcut_copy: "Ctrl+C".to_string(),
+            shortcut_save: "Ctrl+S".to_string(),
+            shortcut_cancel: "Escape".to_string(),
             shortcuts_enabled: true,
             last_save_dir: default_save,
+            previous_selection: None,
+            presets: default_presets(),
         }
     }
+}
+
+fn default_presets() -> Vec<Preset> {
+    vec![
+        // Free
+        Preset {
+            id: "free".to_string(),
+            name: "Free / Custom".to_string(),
+            preset_type: PresetType::Free,
+            width: 0,
+            height: 0,
+            aspect_ratio: None,
+            enabled: true,
+            order: 0,
+            is_builtin: true,
+        },
+        // Aspect ratios
+        Preset {
+            id: "ar_1_1".to_string(),
+            name: "1:1".to_string(),
+            preset_type: PresetType::AspectRatio,
+            width: 1,
+            height: 1,
+            aspect_ratio: Some("1:1".to_string()),
+            enabled: true,
+            order: 1,
+            is_builtin: true,
+        },
+        Preset {
+            id: "ar_4_3".to_string(),
+            name: "4:3".to_string(),
+            preset_type: PresetType::AspectRatio,
+            width: 4,
+            height: 3,
+            aspect_ratio: Some("4:3".to_string()),
+            enabled: true,
+            order: 2,
+            is_builtin: true,
+        },
+        Preset {
+            id: "ar_3_4".to_string(),
+            name: "3:4".to_string(),
+            preset_type: PresetType::AspectRatio,
+            width: 3,
+            height: 4,
+            aspect_ratio: Some("3:4".to_string()),
+            enabled: true,
+            order: 3,
+            is_builtin: true,
+        },
+        Preset {
+            id: "ar_16_9".to_string(),
+            name: "16:9".to_string(),
+            preset_type: PresetType::AspectRatio,
+            width: 16,
+            height: 9,
+            aspect_ratio: Some("16:9".to_string()),
+            enabled: true,
+            order: 4,
+            is_builtin: true,
+        },
+        Preset {
+            id: "ar_9_16".to_string(),
+            name: "9:16".to_string(),
+            preset_type: PresetType::AspectRatio,
+            width: 9,
+            height: 16,
+            aspect_ratio: Some("9:16".to_string()),
+            enabled: true,
+            order: 5,
+            is_builtin: true,
+        },
+        Preset {
+            id: "ar_3_2".to_string(),
+            name: "3:2".to_string(),
+            preset_type: PresetType::AspectRatio,
+            width: 3,
+            height: 2,
+            aspect_ratio: Some("3:2".to_string()),
+            enabled: true,
+            order: 6,
+            is_builtin: true,
+        },
+        Preset {
+            id: "ar_2_3".to_string(),
+            name: "2:3".to_string(),
+            preset_type: PresetType::AspectRatio,
+            width: 2,
+            height: 3,
+            aspect_ratio: Some("2:3".to_string()),
+            enabled: true,
+            order: 7,
+            is_builtin: true,
+        },
+        Preset {
+            id: "ar_21_9".to_string(),
+            name: "21:9".to_string(),
+            preset_type: PresetType::AspectRatio,
+            width: 21,
+            height: 9,
+            aspect_ratio: Some("21:9".to_string()),
+            enabled: true,
+            order: 8,
+            is_builtin: true,
+        },
+        // Fixed sizes
+        Preset {
+            id: "fs_320".to_string(),
+            name: "320 × 320".to_string(),
+            preset_type: PresetType::FixedSize,
+            width: 320,
+            height: 320,
+            aspect_ratio: None,
+            enabled: true,
+            order: 10,
+            is_builtin: true,
+        },
+        Preset {
+            id: "fs_512".to_string(),
+            name: "512 × 512".to_string(),
+            preset_type: PresetType::FixedSize,
+            width: 512,
+            height: 512,
+            aspect_ratio: None,
+            enabled: true,
+            order: 11,
+            is_builtin: true,
+        },
+        Preset {
+            id: "fs_1024".to_string(),
+            name: "1024 × 1024".to_string(),
+            preset_type: PresetType::FixedSize,
+            width: 1024,
+            height: 1024,
+            aspect_ratio: None,
+            enabled: true,
+            order: 12,
+            is_builtin: true,
+        },
+        Preset {
+            id: "fs_1280x720".to_string(),
+            name: "1280 × 720".to_string(),
+            preset_type: PresetType::FixedSize,
+            width: 1280,
+            height: 720,
+            aspect_ratio: None,
+            enabled: true,
+            order: 13,
+            is_builtin: true,
+        },
+        Preset {
+            id: "fs_1920x1080".to_string(),
+            name: "1920 × 1080".to_string(),
+            preset_type: PresetType::FixedSize,
+            width: 1920,
+            height: 1080,
+            aspect_ratio: None,
+            enabled: true,
+            order: 14,
+            is_builtin: true,
+        },
+        Preset {
+            id: "fs_1080x1920".to_string(),
+            name: "1080 × 1920".to_string(),
+            preset_type: PresetType::FixedSize,
+            width: 1080,
+            height: 1920,
+            aspect_ratio: None,
+            enabled: true,
+            order: 15,
+            is_builtin: true,
+        },
+        Preset {
+            id: "fs_1280x960".to_string(),
+            name: "1280 × 960".to_string(),
+            preset_type: PresetType::FixedSize,
+            width: 1280,
+            height: 960,
+            aspect_ratio: None,
+            enabled: true,
+            order: 16,
+            is_builtin: true,
+        },
+    ]
 }
 
 fn get_settings_path() -> PathBuf {
@@ -42,7 +266,14 @@ pub fn load_settings() -> Result<AppSettings, String> {
 
     if path.exists() {
         let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&content).map_err(|e| e.to_string())
+        // Merge with defaults to handle new fields added in updates
+        let mut settings: AppSettings = serde_json::from_str(&content)
+            .map_err(|e| e.to_string())?;
+        // Ensure presets exist even if old settings file doesn't have them
+        if settings.presets.is_empty() {
+            settings.presets = default_presets();
+        }
+        Ok(settings)
     } else {
         Ok(AppSettings::default())
     }

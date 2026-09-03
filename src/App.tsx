@@ -5,11 +5,35 @@ import { listen } from "@tauri-apps/api/event";
 import { CaptureOverlay } from "./components/CaptureOverlay";
 import { SettingsPanel } from "./components/SettingsPanel";
 
+export interface Preset {
+  id: string;
+  name: string;
+  type: "aspect_ratio" | "fixed_size" | "free";
+  width: number;
+  height: number;
+  aspect_ratio: string | null;
+  enabled: boolean;
+  order: number;
+  is_builtin: boolean;
+}
+
+export interface SelectionGeometry {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface AppSettings {
   shortcut_region: string;
   shortcut_fullscreen: string;
+  shortcut_copy: string;
+  shortcut_save: string;
+  shortcut_cancel: string;
   shortcuts_enabled: boolean;
   last_save_dir: string;
+  previous_selection: SelectionGeometry | null;
+  presets: Preset[];
 }
 
 type SessionPhase = "idle" | "selecting" | "annotating" | "settings";
@@ -17,12 +41,17 @@ type SessionPhase = "idle" | "selecting" | "annotating" | "settings";
 function App() {
   const [phase, setPhase] = useState<SessionPhase>("idle");
   const [screenshot, setScreenshot] = useState<string | null>(null);
-  const [selectionRect, setSelectionRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [selectionRect, setSelectionRect] = useState<SelectionGeometry | null>(null);
   const [settings, setSettings] = useState<AppSettings>({
     shortcut_region: "PrintScreen",
     shortcut_fullscreen: "Shift+PrintScreen",
+    shortcut_copy: "Ctrl+C",
+    shortcut_save: "Ctrl+S",
+    shortcut_cancel: "Escape",
     shortcuts_enabled: true,
     last_save_dir: "",
+    previous_selection: null,
+    presets: [],
   });
 
   // Load settings on mount
@@ -39,7 +68,8 @@ function App() {
     listen("region-capture", () => {
       setPhase("selecting");
       setScreenshot(null);
-      setSelectionRect(null);
+      // Restore previous selection if available
+      setSelectionRect(settings.previous_selection || null);
     }).then((fn) => unlisteners.push(fn));
 
     listen("fullscreen-capture", async () => {
@@ -51,111 +81,103 @@ function App() {
       }
     }).then((fn) => unlisteners.push(fn));
 
-    listen("toggle-shortcuts", () => {
-      setSettings((prev) => {
-        const updated = { ...prev, shortcuts_enabled: !prev.shortcuts_enabled };
-        invoke("save_settings", { settings: updated });
-        return updated;
-      });
-    }).then((fn) => unlisteners.push(fn));
-
     listen("show-settings", () => {
       setPhase("settings");
     }).then((fn) => unlisteners.push(fn));
 
-    return () => {
-      unlisteners.forEach((fn) => fn());
-    };
-  }, []);
+    return () => unlisteners.forEach((fn) => fn());
+  }, [settings.previous_selection]);
 
-  // Handle Escape key
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (phase === "settings") {
-          setPhase("idle");
-          getCurrentWindow().hide();
-        } else if (phase === "selecting" || phase === "annotating") {
-          endSession();
-        }
+  const handleSelectionComplete = useCallback(
+    async (rect: SelectionGeometry) => {
+      try {
+        const result = await invoke<{ image_data: string; width: number; height: number }>(
+          "capture_region",
+          { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+        );
+        setScreenshot(result.image_data);
+        setSelectionRect(rect);
+        setPhase("annotating");
+      } catch (e) {
+        console.error("Capture failed:", e);
+        setPhase("idle");
       }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [phase]);
+    },
+    []
+  );
 
-  const endSession = useCallback(() => {
+  const handleCopy = useCallback(
+    async (finalImage: string) => {
+      try {
+        await invoke("copy_image_to_clipboard", { dataUrl: finalImage });
+        // Save previous selection on successful copy
+        if (selectionRect) {
+          const updated = { ...settings, previous_selection: selectionRect };
+          setSettings(updated);
+          await invoke("save_settings", { settings: updated });
+        }
+      } catch (e) {
+        console.error("Copy failed:", e);
+      }
+      setPhase("idle");
+      setScreenshot(null);
+      setSelectionRect(null);
+      getCurrentWindow().hide();
+    },
+    [selectionRect, settings]
+  );
+
+  const handleSave = useCallback(
+    async (finalImage: string) => {
+      try {
+        const result = await invoke<string>("save_screenshot", {
+          dataUrl: finalImage,
+          defaultPath: settings.last_save_dir,
+        });
+        // Save previous selection and last save dir on successful save
+        if (selectionRect && result) {
+          const dir = result.substring(0, result.lastIndexOf("\\") + 1) || result.substring(0, result.lastIndexOf("/") + 1);
+          const updated = { ...settings, previous_selection: selectionRect, last_save_dir: dir };
+          setSettings(updated);
+          await invoke("save_settings", { settings: updated });
+        }
+      } catch (e) {
+        console.error("Save failed:", e);
+      }
+      setPhase("idle");
+      setScreenshot(null);
+      setSelectionRect(null);
+      getCurrentWindow().hide();
+    },
+    [selectionRect, settings]
+  );
+
+  const handleCancel = useCallback(() => {
+    // Cancel does NOT update previous_selection
     setPhase("idle");
     setScreenshot(null);
     setSelectionRect(null);
     getCurrentWindow().hide();
   }, []);
 
-  const handleSelectionComplete = useCallback(async (rect: { x: number; y: number; w: number; h: number }) => {
-    try {
-      const result = await invoke<{ image_data: string; width: number; height: number }>(
-        "capture_region",
-        { x: rect.x, y: rect.y, width: rect.w, height: rect.h }
-      );
-      setScreenshot(result.image_data);
-      setSelectionRect(rect);
-      setPhase("annotating");
-    } catch (e) {
-      console.error("Capture failed:", e);
-      endSession();
-    }
-  }, [endSession]);
-
-  const handleCopy = useCallback(async (finalImage: string) => {
-    try {
-      await invoke("copy_image_to_clipboard", { dataUrl: finalImage });
-    } catch (e) {
-      console.error("Copy failed:", e);
-    }
-    endSession();
-  }, [endSession]);
-
-  const handleSave = useCallback(async (finalImage: string) => {
-    try {
-      const savedPath = await invoke<string>("save_screenshot", {
-        imageData: finalImage,
-        lastSaveDir: settings.last_save_dir,
-      });
-
-      // Remember last save directory
-      const lastSep = Math.max(savedPath.lastIndexOf("\\"), savedPath.lastIndexOf("/"));
-      const dir = lastSep > 0 ? savedPath.substring(0, lastSep) : savedPath;
-      const updatedSettings = { ...settings, last_save_dir: dir };
-      setSettings(updatedSettings);
-      await invoke("save_settings", { settings: updatedSettings });
-    } catch (e) {
-      if (e !== "Save cancelled") {
-        console.error("Save failed:", e);
+  const handleSaveSettings = useCallback(
+    async (newSettings: AppSettings) => {
+      setSettings(newSettings);
+      try {
+        await invoke("save_settings", { settings: newSettings });
+      } catch (e) {
+        console.error("Failed to save settings:", e);
       }
-    }
-    endSession();
-  }, [settings, endSession]);
-
-  const handleCancel = useCallback(() => {
-    endSession();
-  }, [endSession]);
-
-  const handleSaveSettings = useCallback(async (newSettings: AppSettings) => {
-    setSettings(newSettings);
-    await invoke("save_settings", { settings: newSettings });
-    setPhase("idle");
-    getCurrentWindow().hide();
-  }, []);
+    },
+    []
+  );
 
   if (phase === "settings") {
     return (
       <SettingsPanel
         settings={settings}
         onSave={handleSaveSettings}
-        onClose={() => {
-          setPhase("idle");
-          getCurrentWindow().hide();
-        }}
+        onClose={() => setPhase("idle")}
       />
     );
   }
@@ -166,10 +188,13 @@ function App() {
         phase={phase}
         screenshot={screenshot}
         selectionRect={selectionRect}
+        presets={settings.presets.filter((p) => p.enabled)}
         onSelectionComplete={handleSelectionComplete}
         onCopy={handleCopy}
         onSave={handleSave}
         onCancel={handleCancel}
+        shortcutCopy={settings.shortcut_copy}
+        shortcutSave={settings.shortcut_save}
       />
     );
   }
