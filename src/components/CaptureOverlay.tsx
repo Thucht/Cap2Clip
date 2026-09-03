@@ -41,6 +41,9 @@ export function CaptureOverlay({
   const screenW = window.innerWidth;
   const screenH = window.innerHeight;
 
+  // Whether any interaction is happening (hide toolbars during this)
+  const isInteracting = isDragging || isResizing !== null || isMoving;
+
   // Initialize rect when entering selecting phase
   useEffect(() => {
     if (phase === "selecting") {
@@ -87,7 +90,7 @@ export function CaptureOverlay({
     return { w: Math.round(w), h: Math.round(h) };
   }, [getAspectRatio]);
 
-  // Mouse down on overlay background
+  // Mouse down on overlay background (selecting phase only - create new selection)
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (phase !== "selecting") return;
 
@@ -150,7 +153,6 @@ export function CaptureOverlay({
 
   const handleMouseUp = useCallback(() => {
     if (isDragging && rect && rect.width > 5 && rect.height > 5) {
-      // Enter annotating immediately - NO capture, just transition
       onEnterAnnotate(rect);
     }
     setIsDragging(false);
@@ -204,7 +206,6 @@ export function CaptureOverlay({
 
     setRect(newRect);
 
-    // If already annotating, just update rect (canvas will re-crop)
     if (phase === "annotating") {
       onEnterAnnotate(newRect);
     }
@@ -273,11 +274,31 @@ export function CaptureOverlay({
     </>
   );
 
+  // Render move zones (edge grab areas) for annotating phase
+  // These are separate from the selection-rect div since it has pointer-events:none
+  const BORDER_WIDTH = 8;
+  const renderMoveZones = () => {
+    if (!rect) return null;
+    const { x, y, width: w, height: h } = rect;
+    return (
+      <>
+        {/* Top edge */}
+        <div className="move-zone move-zone-top" style={{ left: x, top: y - BORDER_WIDTH / 2, width: w, height: BORDER_WIDTH }} onMouseDown={handleMoveStart} />
+        {/* Bottom edge */}
+        <div className="move-zone move-zone-bottom" style={{ left: x, top: y + h - BORDER_WIDTH / 2, width: w, height: BORDER_WIDTH }} onMouseDown={handleMoveStart} />
+        {/* Left edge */}
+        <div className="move-zone move-zone-left" style={{ left: x - BORDER_WIDTH / 2, top: y, width: BORDER_WIDTH, height: h }} onMouseDown={handleMoveStart} />
+        {/* Right edge */}
+        <div className="move-zone move-zone-right" style={{ left: x + w - BORDER_WIDTH / 2, top: y, width: BORDER_WIDTH, height: h }} onMouseDown={handleMoveStart} />
+      </>
+    );
+  };
+
   return (
     <div
       ref={overlayRef}
       className="capture-overlay"
-      style={{ cursor: phase === "selecting" ? cursorStyle : "default" }}
+      style={{ cursor: phase === "selecting" ? cursorStyle : isMoving ? "move" : "default" }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
@@ -356,23 +377,26 @@ export function CaptureOverlay({
             />
           </div>
 
-          {/* Selection border + handles ON TOP (pointer-events only on handles) */}
+          {/* Selection border visual (pointer-events: none in CSS) */}
           <div
             className="selection-rect selection-active"
             style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
-            onMouseDown={handleMoveStart}
           >
             <div className="selection-size">{rect.width} × {rect.height}</div>
             {renderHandles()}
           </div>
 
-          {/* Split toolbars: horizontal (bottom) + vertical (right) */}
+          {/* Move zones: edge grab areas for dragging the selection */}
+          {renderMoveZones()}
+
+          {/* Split toolbars: horizontal (actions) + vertical (drawing tools) */}
           <AnnotationToolbar
             onCopy={handleCopyClick}
             onSave={handleSaveClick}
             onCancel={onCancel}
             canvasRef={canvasRef}
             rect={rect}
+            visible={!isInteracting}
             presets={presets}
             activePreset={activePreset}
             onPresetSelect={handlePresetSelect}

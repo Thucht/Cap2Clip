@@ -11,6 +11,7 @@ interface AnnotationToolbarProps {
   onCancel: () => void;
   canvasRef: React.MutableRefObject<any>;
   rect: SelectionGeometry;
+  visible: boolean;
   presets?: Preset[];
   activePreset?: Preset | null;
   onPresetSelect?: (preset: Preset) => void;
@@ -24,10 +25,7 @@ const COLORS = [
 const STROKE_WIDTHS = [2, 3, 5, 8];
 const FONT_SIZES = [14, 18, 24, 32, 48];
 
-// Toolbar estimated dimensions
-const HORIZONTAL_TOOLBAR_ESTIMATE = { width: 720, height: 56 };
-const VERTICAL_TOOLBAR_ESTIMATE = { width: 60, height: 200 };
-const TOOLBAR_GAP = 12; // gap between toolbar and selection rect
+const TOOLBAR_GAP = 12;
 
 export function AnnotationToolbar({
   onCopy,
@@ -35,6 +33,7 @@ export function AnnotationToolbar({
   onCancel,
   canvasRef,
   rect,
+  visible,
   presets = [],
   activePreset,
   onPresetSelect,
@@ -49,10 +48,9 @@ export function AnnotationToolbar({
   const redoStack = useRef<string[]>([]);
   const hToolbarRef = useRef<HTMLDivElement>(null);
   const vToolbarRef = useRef<HTMLDivElement>(null);
-  const [hSize, setHSize] = useState(HORIZONTAL_TOOLBAR_ESTIMATE);
-  const [vSize, setVSize] = useState(VERTICAL_TOOLBAR_ESTIMATE);
+  const [hSize, setHSize] = useState({ width: 500, height: 50 });
+  const [vSize, setVSize] = useState({ width: 56, height: 340 });
 
-  // Measure toolbar sizes after render
   useLayoutEffect(() => {
     if (hToolbarRef.current) {
       const r = hToolbarRef.current.getBoundingClientRect();
@@ -62,41 +60,35 @@ export function AnnotationToolbar({
       const r = vToolbarRef.current.getBoundingClientRect();
       setVSize({ width: r.width, height: r.height });
     }
-  }, [activeTool, color, strokeWidth, fontSize, showColorPicker, showPresetDropdown, presets]);
+  }, [activeTool, color, strokeWidth, fontSize, showColorPicker, showPresetDropdown, presets, visible]);
 
   const screenW = window.innerWidth;
   const screenH = window.innerHeight;
 
-  // Determine horizontal toolbar position (above or below the rect)
+  // Horizontal toolbar: snap above or below selection
   const hFitsBelow = rect.y + rect.height + TOOLBAR_GAP + hSize.height <= screenH;
   const hFitsAbove = rect.y - TOOLBAR_GAP - hSize.height >= 0;
-  const horizontalPosition = hFitsBelow ? "below" : hFitsAbove ? "above" : "below";
+  const horizontalTop = hFitsBelow
+    ? rect.y + rect.height + TOOLBAR_GAP
+    : hFitsAbove
+      ? rect.y - TOOLBAR_GAP - hSize.height
+      : Math.min(rect.y + rect.height + TOOLBAR_GAP, screenH - hSize.height - 8);
   const horizontalLeft = Math.max(
     8,
-    Math.min(
-      screenW - hSize.width - 8,
-      rect.x + rect.width / 2 - hSize.width / 2
-    )
+    Math.min(screenW - hSize.width - 8, rect.x + rect.width / 2 - hSize.width / 2)
   );
-  const horizontalTop =
-    horizontalPosition === "below"
-      ? rect.y + rect.height + TOOLBAR_GAP
-      : rect.y - TOOLBAR_GAP - hSize.height;
 
-  // Determine vertical toolbar position (right or left of the rect)
+  // Vertical toolbar: snap left or right of selection
   const vFitsRight = rect.x + rect.width + TOOLBAR_GAP + vSize.width <= screenW;
   const vFitsLeft = rect.x - TOOLBAR_GAP - vSize.width >= 0;
-  const verticalSide = vFitsRight ? "right" : vFitsLeft ? "left" : "right";
-  const verticalLeft =
-    verticalSide === "right"
-      ? rect.x + rect.width + TOOLBAR_GAP
-      : rect.x - TOOLBAR_GAP - vSize.width;
+  const verticalLeft = vFitsRight
+    ? rect.x + rect.width + TOOLBAR_GAP
+    : vFitsLeft
+      ? rect.x - TOOLBAR_GAP - vSize.width
+      : Math.min(rect.x + rect.width + TOOLBAR_GAP, screenW - vSize.width - 8);
   const verticalTop = Math.max(
     8,
-    Math.min(
-      screenH - vSize.height - 8,
-      rect.y + rect.height / 2 - vSize.height / 2
-    )
+    Math.min(screenH - vSize.height - 8, rect.y + rect.height / 2 - vSize.height / 2)
   );
 
   const getCanvas = (): Canvas | null => {
@@ -186,18 +178,79 @@ export function AnnotationToolbar({
     { id: "text", icon: "T", label: "Text" },
   ];
 
+  const displayStyle = visible ? {} : { opacity: 0, pointerEvents: "none" as const };
+
   return (
     <>
-      {/* HORIZONTAL TOOLBAR: drawing tools, color, stroke, undo, preset */}
+      {/* HORIZONTAL TOOLBAR: Copy, Save, Cancel, Undo, Redo, Delete, Presets */}
       <div
         ref={hToolbarRef}
         className="annotation-toolbar annotation-toolbar-horizontal"
-        style={{ left: horizontalLeft, top: horizontalTop }}
+        style={{ left: horizontalLeft, top: horizontalTop, ...displayStyle }}
         onKeyDown={handleKeyDown}
         tabIndex={0}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="toolbar-section tools">
+        <div className="toolbar-section">
+          <button className="action-btn copy" onClick={onCopy} title="Copy (Ctrl+C)">
+            📋 Copy
+          </button>
+          <button className="action-btn save" onClick={onSave} title="Save (Ctrl+S)">
+            💾 Save
+          </button>
+          <button className="action-btn cancel" onClick={onCancel} title="Cancel (Esc)">
+            ✕ Cancel
+          </button>
+        </div>
+
+        <div className="toolbar-divider" />
+
+        <div className="toolbar-section">
+          <button className="tool-btn" onClick={handleUndo} title="Undo (Ctrl+Z)">↩</button>
+          <button className="tool-btn" onClick={handleRedo} title="Redo (Ctrl+Y)">↪</button>
+          <button className="tool-btn" onClick={handleDelete} title="Delete">🗑</button>
+        </div>
+
+        <div className="toolbar-divider" />
+
+        {presets.length > 0 && (
+          <div className="toolbar-section">
+            <div className="preset-dropdown-wrapper">
+              <button
+                className="preset-dropdown-trigger"
+                onClick={(e) => { e.stopPropagation(); setShowPresetDropdown(!showPresetDropdown); }}
+              >
+                📐 {activePreset?.name || "Resize"} ▾
+              </button>
+              {showPresetDropdown && (
+                <div className="preset-dropdown-menu" onMouseDown={(e) => e.stopPropagation()}>
+                  {presets.sort((a, b) => a.order - b.order).map((p) => (
+                    <button
+                      key={p.id}
+                      className={`preset-dropdown-item ${activePreset?.id === p.id ? "active" : ""}`}
+                      onClick={() => { if (onPresetSelect) onPresetSelect(p); setShowPresetDropdown(false); }}
+                    >
+                      {p.name}
+                      {p.type !== "free" && p.width > 0 && (
+                        <span className="preset-size-hint">{p.width}×{p.height}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* VERTICAL TOOLBAR: Drawing tools, color, stroke, font size */}
+      <div
+        ref={vToolbarRef}
+        className="annotation-toolbar annotation-toolbar-vertical"
+        style={{ left: verticalLeft, top: verticalTop, ...displayStyle }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="toolbar-section vertical">
           {tools.map((tool) => (
             <button
               key={tool.id}
@@ -210,9 +263,9 @@ export function AnnotationToolbar({
           ))}
         </div>
 
-        <div className="toolbar-divider" />
+        <div className="toolbar-divider toolbar-divider-h" />
 
-        <div className="toolbar-section">
+        <div className="toolbar-section vertical">
           <button
             className="color-swatch-btn"
             style={{ backgroundColor: color }}
@@ -220,7 +273,7 @@ export function AnnotationToolbar({
             title="Color"
           />
           {showColorPicker && (
-            <div className="color-picker-popup" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="color-picker-popup color-picker-popup-right" onMouseDown={(e) => e.stopPropagation()}>
               {COLORS.map((c) => (
                 <button
                   key={c}
@@ -233,7 +286,7 @@ export function AnnotationToolbar({
           )}
         </div>
 
-        <div className="toolbar-section">
+        <div className="toolbar-section vertical">
           {STROKE_WIDTHS.map((w) => (
             <button
               key={w}
@@ -247,92 +300,21 @@ export function AnnotationToolbar({
         </div>
 
         {activeTool === "text" && (
-          <div className="toolbar-section">
-            <select
-              className="font-size-select"
-              value={fontSize}
-              onChange={(e) => setFontSize(Number(e.target.value))}
-            >
-              {FONT_SIZES.map((s) => (
-                <option key={s} value={s}>{s}px</option>
-              ))}
-            </select>
-          </div>
-        )}
-
-        <div className="toolbar-divider" />
-
-        <div className="toolbar-section">
-          <button className="tool-btn" onClick={handleUndo} title="Undo (Ctrl+Z)">↩</button>
-          <button className="tool-btn" onClick={handleRedo} title="Redo (Ctrl+Y)">↪</button>
-          <button className="tool-btn" onClick={handleDelete} title="Delete">🗑</button>
-        </div>
-
-        <div className="toolbar-divider" />
-
-        {presets.length > 0 && (
           <>
-            <div className="toolbar-section">
-              <div className="preset-dropdown-wrapper">
-                <button
-                  className="preset-dropdown-trigger"
-                  onClick={(e) => { e.stopPropagation(); setShowPresetDropdown(!showPresetDropdown); }}
-                >
-                  📐 {activePreset?.name || "Resize"} ▾
-                </button>
-                {showPresetDropdown && (
-                  <div className="preset-dropdown-menu" onMouseDown={(e) => e.stopPropagation()}>
-                    {presets.sort((a, b) => a.order - b.order).map((p) => (
-                      <button
-                        key={p.id}
-                        className={`preset-dropdown-item ${activePreset?.id === p.id ? "active" : ""}`}
-                        onClick={() => { if (onPresetSelect) onPresetSelect(p); setShowPresetDropdown(false); }}
-                      >
-                        {p.name}
-                        {p.type !== "free" && p.width > 0 && (
-                          <span className="preset-size-hint">{p.width}×{p.height}</span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+            <div className="toolbar-divider toolbar-divider-h" />
+            <div className="toolbar-section vertical">
+              <select
+                className="font-size-select"
+                value={fontSize}
+                onChange={(e) => setFontSize(Number(e.target.value))}
+              >
+                {FONT_SIZES.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
             </div>
-            <div className="toolbar-divider" />
           </>
         )}
-      </div>
-
-      {/* VERTICAL TOOLBAR: action buttons (Copy / Save / Cancel) */}
-      <div
-        ref={vToolbarRef}
-        className="annotation-toolbar annotation-toolbar-vertical"
-        style={{ left: verticalLeft, top: verticalTop }}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="toolbar-section vertical">
-          <button
-            className="action-btn copy"
-            onClick={onCopy}
-            title="Copy (Ctrl+C)"
-          >
-            📋
-          </button>
-          <button
-            className="action-btn save"
-            onClick={onSave}
-            title="Save (Ctrl+S)"
-          >
-            💾
-          </button>
-          <button
-            className="action-btn cancel"
-            onClick={onCancel}
-            title="Cancel (Esc)"
-          >
-            ✕
-          </button>
-        </div>
       </div>
     </>
   );
