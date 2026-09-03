@@ -1,79 +1,181 @@
 import { useState, useEffect, useCallback } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Overlay } from "./components/Overlay";
-import { Editor } from "./components/Editor";
-import { PresetPanel } from "./components/PresetPanel";
-import { useAppStore } from "./stores/appStore";
-import "./styles/global.css";
+import { listen } from "@tauri-apps/api/event";
+import { CaptureOverlay } from "./components/CaptureOverlay";
+import { SettingsPanel } from "./components/SettingsPanel";
+
+export interface AppSettings {
+  shortcut_region: string;
+  shortcut_fullscreen: string;
+  shortcuts_enabled: boolean;
+  last_save_dir: string;
+}
+
+type SessionPhase = "idle" | "selecting" | "annotating" | "settings";
 
 function App() {
-  const [mode, setMode] = useState<"overlay" | "editor">("overlay");
+  const [phase, setPhase] = useState<SessionPhase>("idle");
   const [screenshot, setScreenshot] = useState<string | null>(null);
-  const { loadPresets, showPresetPanel, setShowPresetPanel } = useAppStore();
+  const [selectionRect, setSelectionRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [settings, setSettings] = useState<AppSettings>({
+    shortcut_region: "PrintScreen",
+    shortcut_fullscreen: "Shift+PrintScreen",
+    shortcuts_enabled: true,
+    last_save_dir: "",
+  });
 
-  // Load presets on mount
+  // Load settings on mount
   useEffect(() => {
-    loadPresets();
-  }, [loadPresets]);
+    invoke<AppSettings>("load_settings")
+      .then(setSettings)
+      .catch(console.error);
+  }, []);
 
-  // Handle keyboard shortcuts
+  // Listen for Tauri events from Rust backend
+  useEffect(() => {
+    const unlisteners: (() => void)[] = [];
+
+    listen("region-capture", () => {
+      setPhase("selecting");
+      setScreenshot(null);
+      setSelectionRect(null);
+    }).then((fn) => unlisteners.push(fn));
+
+    listen("fullscreen-capture", async () => {
+      try {
+        const result = await invoke<{ image_data: string; width: number; height: number }>("capture_full_screen");
+        await invoke("copy_image_to_clipboard", { dataUrl: result.image_data });
+      } catch (e) {
+        console.error("Full screen capture failed:", e);
+      }
+    }).then((fn) => unlisteners.push(fn));
+
+    listen("toggle-shortcuts", () => {
+      setSettings((prev) => {
+        const updated = { ...prev, shortcuts_enabled: !prev.shortcuts_enabled };
+        invoke("save_settings", { settings: updated });
+        return updated;
+      });
+    }).then((fn) => unlisteners.push(fn));
+
+    listen("show-settings", () => {
+      setPhase("settings");
+    }).then((fn) => unlisteners.push(fn));
+
+    return () => {
+      unlisteners.forEach((fn) => fn());
+    };
+  }, []);
+
+  // Handle Escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Escape: Close app or go back to overlay
       if (e.key === "Escape") {
-        if (mode === "editor") {
-          setMode("overlay");
-          setScreenshot(null);
-        } else {
-          getCurrentWindow().close();
+        if (phase === "settings") {
+          setPhase("idle");
+          getCurrentWindow().hide();
+        } else if (phase === "selecting" || phase === "annotating") {
+          endSession();
         }
       }
-      
-      // Ctrl+Shift+P: Toggle presets panel
-      if (e.ctrlKey && e.shiftKey && e.key === "P") {
-        e.preventDefault();
-        setShowPresetPanel(!showPresetPanel);
-      }
     };
-
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [mode, showPresetPanel, setShowPresetPanel]);
+  }, [phase]);
 
-  const handleCaptureComplete = useCallback((imageData: string) => {
-    setScreenshot(imageData);
-    setMode("editor");
-  }, []);
-
-  const handleSave = useCallback(() => {
-    // Reset to overlay mode after save
-    setMode("overlay");
+  const endSession = useCallback(() => {
+    setPhase("idle");
     setScreenshot(null);
-    // Close the window after save
-    getCurrentWindow().close();
+    setSelectionRect(null);
+    getCurrentWindow().hide();
   }, []);
+
+  const handleSelectionComplete = useCallback(async (rect: { x: number; y: number; w: number; h: number }) => {
+    try {
+      const result = await invoke<{ image_data: string; width: number; height: number }>(
+        "capture_region",
+        { x: rect.x, y: rect.y, width: rect.w, height: rect.h }
+      );
+      setScreenshot(result.image_data);
+      setSelectionRect(rect);
+      setPhase("annotating");
+    } catch (e) {
+      console.error("Capture failed:", e);
+      endSession();
+    }
+  }, [endSession]);
+
+  const handleCopy = useCallback(async (finalImage: string) => {
+    try {
+      await invoke("copy_image_to_clipboard", { dataUrl: finalImage });
+    } catch (e) {
+      console.error("Copy failed:", e);
+    }
+    endSession();
+  }, [endSession]);
+
+  const handleSave = useCallback(async (finalImage: string) => {
+    try {
+      const savedPath = await invoke<string>("save_screenshot", {
+        imageData: finalImage,
+        lastSaveDir: settings.last_save_dir,
+      });
+
+      // Remember last save directory
+      const lastSep = Math.max(savedPath.lastIndexOf("\\"), savedPath.lastIndexOf("/"));
+      const dir = lastSep > 0 ? savedPath.substring(0, lastSep) : savedPath;
+      const updatedSettings = { ...settings, last_save_dir: dir };
+      setSettings(updatedSettings);
+      await invoke("save_settings", { settings: updatedSettings });
+    } catch (e) {
+      if (e !== "Save cancelled") {
+        console.error("Save failed:", e);
+      }
+    }
+    endSession();
+  }, [settings, endSession]);
 
   const handleCancel = useCallback(() => {
-    setMode("overlay");
-    setScreenshot(null);
+    endSession();
+  }, [endSession]);
+
+  const handleSaveSettings = useCallback(async (newSettings: AppSettings) => {
+    setSettings(newSettings);
+    await invoke("save_settings", { settings: newSettings });
+    setPhase("idle");
+    getCurrentWindow().hide();
   }, []);
 
-  if (mode === "editor" && screenshot) {
+  if (phase === "settings") {
     return (
-      <Editor
+      <SettingsPanel
+        settings={settings}
+        onSave={handleSaveSettings}
+        onClose={() => {
+          setPhase("idle");
+          getCurrentWindow().hide();
+        }}
+      />
+    );
+  }
+
+  if (phase === "selecting" || phase === "annotating") {
+    return (
+      <CaptureOverlay
+        phase={phase}
         screenshot={screenshot}
+        selectionRect={selectionRect}
+        onSelectionComplete={handleSelectionComplete}
+        onCopy={handleCopy}
         onSave={handleSave}
         onCancel={handleCancel}
       />
     );
   }
 
-  return (
-    <>
-      <Overlay onCaptureComplete={handleCaptureComplete} />
-      {showPresetPanel && <PresetPanel />}
-    </>
-  );
+  // Idle: transparent, nothing visible
+  return <div className="idle-state" />;
 }
 
 export default App;

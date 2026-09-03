@@ -2168,28 +2168,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lightshot-clone"
-version = "1.0.0"
-dependencies = [
- "arboard",
- "base64 0.22.1",
- "dirs 5.0.1",
- "image 0.24.9",
- "screenshots",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-clipboard-manager",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-shell",
- "time",
- "uuid",
-]
-
-[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3303,6 +3281,26 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "screenshot-app"
+version = "1.0.0"
+dependencies = [
+ "arboard",
+ "base64 0.22.1",
+ "dirs 5.0.1",
+ "screenshots",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-clipboard-manager",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-shell",
+ "time",
+]
 
 [[package]]
 name = "screenshots"
