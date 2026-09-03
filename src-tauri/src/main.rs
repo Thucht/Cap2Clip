@@ -49,16 +49,16 @@ fn main() {
         ])
         .setup(|app| {
             // Create the capture window (hidden initially)
-            let _window = WebviewWindowBuilder::new(
+            // Use maximized (not fullscreen) to avoid Windows freeze on taskbar click
+            let window = WebviewWindowBuilder::new(
                 app,
                 "capture",
                 WebviewUrl::App("index.html".into()),
             )
             .title("Screenshot")
-            .fullscreen(true)
+            .maximized(true)
             .transparent(true)
             .decorations(false)
-            .always_on_top(true)
             .skip_taskbar(true)
             .visible(false)
             .resizable(false)

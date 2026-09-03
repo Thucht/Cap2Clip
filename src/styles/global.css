@@ -54,16 +54,20 @@ html, body, #root {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
 }
 
-/* ==================== PRESET SELECTOR ==================== */
-.preset-selector {
+/* ==================== PRESET BAR (selecting phase) ==================== */
+.preset-bar {
   position: fixed;
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 10002;
+  z-index: 10005;
 }
 
-.preset-toggle-btn {
+.preset-dropdown-wrapper {
+  position: relative;
+}
+
+.preset-dropdown-trigger {
   padding: 8px 16px;
   background: rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(10px);
@@ -73,13 +77,14 @@ html, body, #root {
   font-size: 13px;
   cursor: pointer;
   transition: background 0.2s;
+  white-space: nowrap;
 }
 
-.preset-toggle-btn:hover {
+.preset-dropdown-trigger:hover {
   background: rgba(0, 0, 0, 0.9);
 }
 
-.preset-dropdown {
+.preset-dropdown-menu {
   position: absolute;
   bottom: 100%;
   left: 50%;
@@ -90,13 +95,14 @@ html, body, #root {
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
   padding: 6px;
-  min-width: 200px;
+  min-width: 220px;
   max-height: 300px;
   overflow-y: auto;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  z-index: 10006;
 }
 
-.preset-item {
+.preset-dropdown-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -111,15 +117,15 @@ html, body, #root {
   transition: background 0.15s;
 }
 
-.preset-item:hover {
+.preset-dropdown-item:hover {
   background: rgba(255, 255, 255, 0.1);
 }
 
-.preset-item.active {
+.preset-dropdown-item.active {
   background: #007AFF;
 }
 
-.preset-type {
+.preset-size-hint {
   font-size: 10px;
   opacity: 0.6;
   margin-left: 8px;
@@ -130,8 +136,18 @@ html, body, #root {
   position: absolute;
   border: 2px solid #007AFF;
   box-shadow: 0 0 0 1px rgba(0, 122, 255, 0.3);
-  z-index: 10000;
+  z-index: 10003;
   cursor: move;
+  pointer-events: all;
+}
+
+/* In annotating phase: visual border only, mouse passes through to canvas */
+.selection-rect.selection-active {
+  z-index: 10004;
+  border: 2px dashed #007AFF;
+  box-shadow: none;
+  background: transparent;
+  pointer-events: none;
 }
 
 .selection-size {
@@ -181,7 +197,7 @@ html, body, #root {
   border: 2px solid white;
   border-radius: 50%;
   pointer-events: all;
-  z-index: 10001;
+  z-index: 10010;
 }
 
 .handle-nw { top: -6px; left: -6px; cursor: nw-resize; }
@@ -193,17 +209,17 @@ html, body, #root {
 .handle-s  { bottom: -6px; left: 50%; margin-left: -6px; cursor: s-resize; }
 .handle-se { bottom: -6px; right: -6px; cursor: se-resize; }
 
-/* ==================== ANNOTATION ==================== */
-.annotation-container {
+/* ==================== ANNOTATION AREA ==================== */
+.annotation-area {
   position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  z-index: 10001;
+  overflow: hidden;
 }
 
 .annotation-canvas-wrapper {
   position: relative;
+  width: 100%;
+  height: 100%;
 }
 
 /* ==================== ANNOTATION TOOLBAR ==================== */
