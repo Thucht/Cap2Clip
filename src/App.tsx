@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { CaptureOverlay } from "./components/CaptureOverlay";
 import { SettingsPanel } from "./components/SettingsPanel";
+import type { Tool } from "./components/AnnotationToolbar";
 
 export interface Preset {
   id: string;
@@ -34,6 +35,8 @@ export interface AppSettings {
   last_save_dir: string;
   previous_selection: SelectionGeometry | null;
   presets: Preset[];
+  auto_start: boolean;
+  shortcuts: { [key: string]: string };
 }
 
 type SessionPhase = "idle" | "selecting" | "annotating" | "settings";
@@ -42,6 +45,7 @@ function App() {
   const [phase, setPhase] = useState<SessionPhase>("idle");
   const [fullScreenshot, setFullScreenshot] = useState<string | null>(null);
   const [selectionRect, setSelectionRect] = useState<SelectionGeometry | null>(null);
+  const [activeTool, setActiveTool] = useState<Tool>("move");
   const [settings, setSettings] = useState<AppSettings>({
     shortcut_region: "PrintScreen",
     shortcut_fullscreen: "Shift+PrintScreen",
@@ -52,27 +56,41 @@ function App() {
     last_save_dir: "",
     previous_selection: null,
     presets: [],
+    auto_start: false,
+    shortcuts: {},
   });
 
   // Load settings on mount
   useEffect(() => {
     invoke<AppSettings>("load_settings")
-      .then(setSettings)
+      .then((loaded) => {
+        // Migrate: ensure new fields exist
+        setSettings({
+          ...loaded,
+          auto_start: loaded.auto_start ?? false,
+          shortcuts: loaded.shortcuts ?? {},
+        });
+      })
       .catch(console.error);
   }, []);
 
-  // Listen for Tauri events from Rust backend
+  // Listen for Tauri events from Rust backend - register ONCE
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
   useEffect(() => {
     const unlisteners: (() => void)[] = [];
 
     listen("region-capture", async () => {
       try {
-        // Capture full screen immediately when PrtScn is pressed
         const result = await invoke<{ image_data: string; width: number; height: number }>("capture_full_screen");
+        const previous = settingsRef.current.previous_selection;
         setFullScreenshot(result.image_data);
-        setPhase("selecting");
-        // Restore previous selection if available
-        setSelectionRect(settings.previous_selection || null);
+        setSelectionRect(previous);
+        setActiveTool("move");
+        // A remembered frame is already a valid selection: enter annotate
+        // immediately so the menu is never missing on the first capture.
+        setPhase(previous ? "annotating" : "selecting");
       } catch (e) {
         console.error("Full screen capture failed:", e);
       }
@@ -92,20 +110,17 @@ function App() {
     }).then((fn) => unlisteners.push(fn));
 
     return () => unlisteners.forEach((fn) => fn());
-  }, [settings.previous_selection]);
+  }, []); // Empty deps - register only once on mount
 
-  // Selection complete: just enter annotating phase, NO capture
   const handleEnterAnnotate = useCallback((rect: SelectionGeometry) => {
     setSelectionRect(rect);
     setPhase("annotating");
   }, []);
 
-  // Copy: crop from full screenshot at current rect, apply annotations, copy
   const handleCopy = useCallback(
     async (finalImage: string) => {
       try {
         await invoke("copy_image_to_clipboard", { dataUrl: finalImage });
-        // Save previous selection on successful copy
         if (selectionRect) {
           const updated = { ...settings, previous_selection: selectionRect };
           setSettings(updated);
@@ -122,7 +137,6 @@ function App() {
     [selectionRect, settings]
   );
 
-  // Save: crop from full screenshot at current rect, apply annotations, save
   const handleSave = useCallback(
     async (finalImage: string) => {
       try {
@@ -158,12 +172,27 @@ function App() {
     setSettings(newSettings);
     try {
       await invoke("save_settings", { settings: newSettings });
+      // Apply auto-start setting
+      try {
+        await invoke("set_auto_start", { enabled: newSettings.auto_start });
+      } catch (e) {
+        console.warn("set_auto_start not implemented yet:", e);
+      }
     } catch (e) {
       console.error("Failed to save settings:", e);
     }
     setPhase("idle");
     getCurrentWindow().hide();
   }, []);
+
+  useEffect(() => {
+    // Toggle click-through and resize: when not capturing, window ignores cursor so other apps work
+    const ignore = phase === "idle";
+    invoke("set_ignore_cursor_events", { ignore }).catch(console.error);
+    if (phase === "selecting" || phase === "annotating") {
+      invoke("resize_window_to_fullscreen").catch(console.error);
+    }
+  }, [phase]);
 
   return (
     <div style={{ width: "100%", height: "100%" }}>
@@ -173,6 +202,8 @@ function App() {
           fullScreenshot={fullScreenshot}
           selectionRect={selectionRect}
           presets={settings.presets.filter((p) => p.enabled)}
+          activeTool={activeTool}
+          onToolChange={setActiveTool as (tool: Tool) => void}
           onEnterAnnotate={handleEnterAnnotate}
           onCopy={handleCopy}
           onSave={handleSave}

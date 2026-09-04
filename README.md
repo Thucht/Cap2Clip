@@ -1,85 +1,206 @@
-# Lightshot Clone
+# Cap2Clip
 
-A lightweight, cross-platform screenshot capture and annotation tool built with Tauri v2. Inspired by Lightshot for Windows/Mac.
+**Cap**ture and **Clip**board — A lightweight screenshot tool for Windows and macOS. Inspired by Lightshot, but lighter and faster.
 
-![Lightshot Clone](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue)
-![Rust](https://img.shields.io/badge/Rust-1.70+-orange)
-![React](https://img.shields.io/badge/React-18-blue)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue)
+![Rust](https://img.shields.io/badge/Rust-1.75+-orange)
+![React](https://img.shields.io/badge/React-18-green)
+![License](https://img.shields.io/badge/License-MIT-green)
+
+## Screenshots
+
+> *[Add screenshot images here]*
+
+## Why Cap2Clip?
+
+- ⚡ **Fast** — Built with Rust + WebView2, launches instantly
+- 🎯 **Minimal** — No cloud, no login, no bloat
+- ✏️ **Annotate** — Draw, highlight, and add text before saving
+- 📋 **Instant** — Copy to clipboard with one click
+- 🔧 **Portable** — Works as a standalone `.exe` or MSI installer
 
 ## Features
 
-- 📸 **Screenshot Capture** - Full screen capture with region selection
-- ✏️ **Drawing Tools** - Rectangle, Circle, Arrow, Pencil, Text
-- 🎨 **Customization** - Color picker, adjustable stroke width
-- 📐 **Dimension Presets** - Save and manage custom screen sizes
-- 💾 **Save & Copy** - Export as PNG or copy to clipboard
-- 🖥️ **System Tray** - Quick access from system tray
-- ⌨️ **Global Shortcut** - Ctrl+Shift+5 to capture from anywhere
+- 📸 **Region Capture** — Drag to select any screen area
+- 🖼️ **Full Screen Capture** — Capture entire screen instantly
+- ✏️ **Drawing Tools** — Pencil, highlighter, rectangle, ellipse, arrow, line, text
+- 🎨 **Color Picker** — Choose any color for your annotations
+- 📐 **Dimension Presets** — Save and reuse common screen sizes (16:9, 4:3, 1:1, etc.)
+- 💾 **Save & Copy** — Export as PNG or copy directly to clipboard
+- ⚙️ **Auto-start** — Launch with Windows (optional)
+- 🔄 **Auto-update** — Check for new versions from within the app
+- 🖥️ **System Tray** — Access capture from anywhere via system tray icon
 
-## Quick Start
+## Installation
 
-```bash
-# Install dependencies
-npm install
+### Windows
 
-# Development
-npm run tauri dev
-
-# Production build
-npm run tauri build
+**Option 1: MSI Installer** (recommended for system-wide install)
 ```
+Download: releases/Screenshot App_1.0.0_x64_en-US.msi
+```
+
+**Option 2: NSIS Setup**
+```
+Download: releases/Screenshot App_1.0.0_x64-setup.exe
+```
+
+**Option 3: Portable**
+```
+Download: releases/screenshot-app.exe
+```
+Run the `.exe` directly — no installation required.
 
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl+Shift+5` | Open capture overlay |
-| `Escape` | Cancel / Close app |
-| `Ctrl+Shift+P` | Toggle preset panel |
+| `PrintScreen` | Open region capture |
+| `Shift + PrintScreen` | Full screen capture → clipboard |
+| `Esc` | Cancel / Close overlay |
+| `[` | Decrease brush size |
+| `]` | Increase brush size |
+| `Ctrl + C` | Copy annotated image to clipboard |
+| `Ctrl + S` | Save annotated image to file |
 
-## Drawing Tools
+## Annotation Tools
 
 | Tool | Shortcut | Description |
 |------|----------|-------------|
-| Select | V | Select and move objects |
-| Rectangle | R | Draw rectangle shapes |
-| Circle | C | Draw circle shapes |
-| Arrow | A | Draw arrows |
-| Pencil | P | Freehand drawing |
-| Text | T | Add text annotations |
+| 🔀 **Move** | M | Move the selection frame |
+| ✋ **Select** | S | Select and manipulate drawn objects |
+| ✏️ **Pen** | P | Freehand drawing |
+| 🖍️ **Highlight** | H | Semi-transparent highlighter |
+| ▬ **Line** | L | Straight lines |
+| ➡️ **Arrow** | A | Arrows |
+| ⬜ **Rectangle** | R | Rectangles |
+| ⭕ **Ellipse** | E | Ellipses/circles |
+| T **Text** | T | Text annotations |
 
-## Project Structure
+### Tool Tips
+
+- **Move tool (default)** — Click anywhere inside the selection to drag the frame. Cursor changes to resize handles at corners.
+- **Color picker** — Click the colored circle in the toolbar to open the color palette.
+- **Brush size** — Use `[` and `]` keys to decrease/increase stroke width.
+
+## Presets
+
+Dimension presets let you quickly create captures with exact aspect ratios or sizes.
+
+### Built-in Presets
+
+| Name | Type | Description |
+|------|------|-------------|
+| Free / Custom | Free | Drag to any size |
+| 1:1 | Aspect Ratio | Square |
+| 4:3 | Aspect Ratio | Classic monitor |
+| 3:4 | Aspect Ratio | Portrait |
+| 16:9 | Aspect Ratio | Widescreen |
+| 9:16 | Aspect Ratio | Mobile portrait |
+| 21:9 | Aspect Ratio | Ultrawide |
+
+### Custom Presets
+
+You can add your own presets in **Settings**:
+1. Click the system tray icon → Settings
+2. Go to **Capture Presets** section
+3. Enter a name, choose type (Fixed Size or Aspect Ratio), and dimensions
+4. Click **Add**
+
+## Development
+
+### Prerequisites
+
+- Node.js 18+
+- Rust 1.75+
+- Windows SDK (for building on Windows)
+
+### Quick Start
+
+```bash
+# Clone the repository
+git clone https://github.com/YOUR_USERNAME/cap2clip.git
+cd cap2clip
+
+# Install dependencies
+npm install
+
+# Run in development mode
+npm run tauri dev
+
+# Build for production
+npm run tauri build
+```
+
+### Project Structure
 
 ```
-lightshot-clone/
-├── src/                     # React frontend
-│   ├── components/          # UI components
-│   ├── stores/              # Zustand state
-│   └── styles/              # CSS styles
-├── src-tauri/               # Rust backend
+cap2clip/
+├── src/                          # React frontend
+│   ├── components/
+│   │   ├── AnnotationCanvas.tsx  # Fabric.js canvas for drawing
+│   │   ├── AnnotationToolbar.tsx # Horizontal + vertical toolbars
+│   │   ├── CaptureOverlay.tsx    # Selection + overlay UI
+│   │   ├── SettingsPanel.tsx     # Settings UI
+│   │   └── icons.tsx             # SVG icon components
+│   ├── App.tsx                   # Main app component
+│   └── styles/
+│       └── global.css            # All styles
+├── src-tauri/                    # Rust backend
 │   ├── src/
-│   │   ├── main.rs         # Entry point
-│   │   ├── capture.rs      # Screenshot capture
-│   │   ├── presets.rs      # Preset storage
-│   │   └── clipboard.rs    # Clipboard operations
-│   └── icons/              # App icons
+│   │   ├── main.rs              # Entry point, tray, shortcuts
+│   │   ├── capture.rs           # Screenshot capture logic
+│   │   ├── clipboard.rs         # Clipboard operations
+│   │   └── settings.rs          # Settings persistence
+│   ├── icons/                   # App icons
+│   ├── Cargo.toml
+│   └── tauri.conf.json
+├── releases/                     # Built executables & installers
+├── SPEC.md                       # Detailed specification
+├── README.md
 └── package.json
 ```
 
-## Tech Stack
+### Tech Stack
 
-- **Tauri v2** - Rust-powered desktop framework
-- **React 18** - UI framework
-- **Fabric.js** - Canvas manipulation
-- **Zustand** - State management
-- **Vite** - Build tool
+- **Frontend**: React 18, TypeScript, Vite, Fabric.js
+- **Backend**: Rust, Tauri v2
+- **Screenshot**: `screenshots` crate
+- **Clipboard**: `arboard` crate
+- **Registry** (Windows): `winreg` crate
 
 ## Configuration
 
-Presets are stored in:
-- **Windows**: `%APPDATA%/lightshot-clone/presets.json`
-- **macOS**: `~/Library/Application Support/com.lightshot.clone/presets.json`
+Settings are stored in:
+- **Windows**: `%APPDATA%/cap2clip/settings.json`
+- **macOS**: `~/Library/Application Support/cap2clip/settings.json`
+
+### Settings Fields
+
+```json
+{
+  "shortcut_region": "PrintScreen",
+  "shortcut_fullscreen": "Shift+PrintScreen",
+  "shortcut_copy": "Ctrl+C",
+  "shortcut_save": "Ctrl+S",
+  "shortcut_cancel": "Escape",
+  "shortcuts_enabled": true,
+  "last_save_dir": "C:\\Users\\You\\Pictures\\Screenshots",
+  "previous_selection": null,
+  "presets": [...],
+  "auto_start": false
+}
+```
+
+## Known Issues
+
+- System tray left-click behavior varies by OS
+- Transparent window requires WebView2 runtime (Windows)
+
+## Contributing
+
+Contributions welcome! Please open an issue first to discuss what you'd like to change.
 
 ## License
 
-MIT License
+MIT — see [LICENSE](LICENSE) file.

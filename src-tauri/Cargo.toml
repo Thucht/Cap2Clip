@@ -22,6 +22,7 @@ base64 = "0.22"
 dirs = "5"
 arboard = "3"
 time = "0.3"
+winreg = "0.55"
 
 [profile.release]
 strip = true

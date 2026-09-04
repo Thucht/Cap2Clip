@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings, Preset } from "../App";
 
 interface SettingsPanelProps {
@@ -14,6 +15,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
   const [newPresetH, setNewPresetH] = useState("");
   const [newPresetType, setNewPresetType] = useState<"fixed_size" | "aspect_ratio">("fixed_size");
   const [conflictError, setConflictError] = useState("");
+  const [updateStatus, setUpdateStatus] = useState<{ checking: boolean; result: any }>({ checking: false, result: null });
 
   const handleSave = () => {
     // Validate shortcut conflicts
@@ -81,6 +83,22 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
     // Update order values
     const updated = arr.map((p, i) => ({ ...p, order: i }));
     setLocal({ ...local, presets: updated });
+  };
+
+  const handleCheckUpdate = async () => {
+    setUpdateStatus({ checking: true, result: null });
+    try {
+      const info = await invoke<{
+        current_version: string;
+        latest_version: string;
+        update_available: boolean;
+        download_url: string | null;
+        release_notes: string | null;
+      }>("check_for_update");
+      setUpdateStatus({ checking: false, result: info });
+    } catch (e) {
+      setUpdateStatus({ checking: false, result: { error: String(e) } });
+    }
   };
 
   return (
@@ -222,6 +240,40 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
           <div className="setting-row">
             <label>Last Save Directory</label>
             <span className="save-path">{local.last_save_dir || "Not set"}</span>
+          </div>
+        </div>
+
+        {/* Startup & Updates */}
+        <div className="settings-section">
+          <h3>System</h3>
+
+          <div className="setting-row">
+            <label>Start with Windows</label>
+            <button
+              className={`toggle-btn ${local.auto_start ? "on" : "off"}`}
+              onClick={() => setLocal({ ...local, auto_start: !local.auto_start })}
+            >
+              {local.auto_start ? "ON" : "OFF"}
+            </button>
+          </div>
+
+          <div className="setting-row">
+            <label>Check for Updates</label>
+            <button
+              className="check-update-btn"
+              onClick={handleCheckUpdate}
+              disabled={updateStatus.checking}
+            >
+              {updateStatus.checking
+                ? "Checking..."
+                : updateStatus.result
+                ? updateStatus.result.update_available
+                  ? `Update available: v${updateStatus.result.latest_version}`
+                  : updateStatus.result.error
+                  ? "Error"
+                  : "You're up to date!"
+                : "Check Now"}
+            </button>
           </div>
         </div>
 

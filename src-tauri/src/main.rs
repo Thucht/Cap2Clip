@@ -9,11 +9,15 @@ use tauri::{
     Emitter, Manager,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_global_shortcut::ShortcutState;
 
 fn main() {
+    #[cfg(target_os = "windows")]
+    if !ensure_single_instance() {
+        return;
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -25,11 +29,10 @@ fn main() {
                     if event.state == ShortcutState::Pressed {
                         let shortcut_str = shortcut.to_string();
                         if shortcut_str.contains("PrintScreen") && shortcut_str.contains("Shift") {
-                            // Shift+PrtScn: Full screen → clipboard
                             let _ = app.emit("fullscreen-capture", ());
                         } else if shortcut_str.contains("PrintScreen") {
                             // PrtScn: Region capture
-                            if let Some(window) = app.get_webview_window("capture") {
+                            if let Some(window) = app.get_webview_window("main") {
                                 let _ = window.show();
                                 let _ = window.set_focus();
                             }
@@ -45,31 +48,21 @@ fn main() {
             capture::save_screenshot,
             settings::load_settings,
             settings::save_settings,
+            settings::set_auto_start,
+            settings::check_for_update,
+            settings::set_ignore_cursor_events,
+            settings::resize_window_to_fullscreen,
             clipboard::copy_image_to_clipboard,
         ])
         .setup(|app| {
-            // Create the capture window (hidden initially)
-            // Use maximized (not fullscreen) to avoid Windows freeze on taskbar click
-            let window = WebviewWindowBuilder::new(
-                app,
-                "capture",
-                WebviewUrl::App("index.html".into()),
-            )
-            .title("Screenshot")
-            .maximized(true)
-            .transparent(true)
-            .decorations(false)
-            .skip_taskbar(true)
-            .visible(false)
-            .resizable(false)
-            .build()?;
-
-            // Setup system tray
             setup_tray(app)?;
-
-            // Register default shortcuts
             register_shortcuts(app)?;
-
+            // Make window click-through when idle so it doesn't block mouse events
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_ignore_cursor_events(true);
+                // The capture window is an overlay, not a second taskbar application.
+                let _ = window.set_skip_taskbar(true);
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -78,64 +71,46 @@ fn main() {
 
 fn register_shortcuts(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
-
     let shortcut_manager = app.global_shortcut();
-
-    // Register PrtScn for region capture
     shortcut_manager.register("PrintScreen")?;
-
-    // Register Shift+PrtScn for full screen capture
     shortcut_manager.register("Shift+PrintScreen")?;
-
     Ok(())
 }
 
 fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let capture_region = MenuItem::with_id(app, "capture_region", "Capture Region", true, None::<&str>)?;
-    let full_screen = MenuItem::with_id(app, "full_screen", "Full Screen", true, None::<&str>)?;
+    let capture_fullscreen = MenuItem::with_id(app, "capture_fullscreen", "Capture Full Screen", true, None::<&str>)?;
     let separator1 = PredefinedMenuItem::separator(app)?;
-    let enable_shortcuts = MenuItem::with_id(app, "toggle_shortcuts", "Enable Shortcuts  ✓", true, None::<&str>)?;
-    let settings_item = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
+    let show_settings = MenuItem::with_id(app, "show_settings", "Settings", true, None::<&str>)?;
     let separator2 = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
-    let menu = Menu::with_items(
-        app,
-        &[
-            &capture_region,
-            &full_screen,
-            &separator1,
-            &enable_shortcuts,
-            &settings_item,
-            &separator2,
-            &quit,
-        ],
-    )?;
+    let menu = Menu::with_items(app, &[
+        &capture_region,
+        &capture_fullscreen,
+        &separator1,
+        &show_settings,
+        &separator2,
+        &quit,
+    ])?;
 
     let _tray = TrayIconBuilder::new()
-        .icon(app.default_window_icon().unwrap().clone())
+        .icon(app.default_window_icon().cloned().unwrap())
         .menu(&menu)
-        .tooltip("Screenshot App")
+        .tooltip("Cap2Clip - Screenshot Tool")
         .on_menu_event(|app, event| {
             match event.id.as_ref() {
                 "capture_region" => {
-                    if let Some(window) = app.get_webview_window("capture") {
+                    if let Some(window) = app.get_webview_window("main") {
                         let _ = window.show();
                         let _ = window.set_focus();
                     }
                     let _ = app.emit("region-capture", ());
                 }
-                "full_screen" => {
+                "capture_fullscreen" => {
                     let _ = app.emit("fullscreen-capture", ());
                 }
-                "toggle_shortcuts" => {
-                    let _ = app.emit("toggle-shortcuts", ());
-                }
-                "settings" => {
-                    if let Some(window) = app.get_webview_window("capture") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
+                "show_settings" => {
                     let _ = app.emit("show-settings", ());
                 }
                 "quit" => {
@@ -152,13 +127,44 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             } = event
             {
                 let app = tray.app_handle();
-                if let Some(window) = app.get_webview_window("capture") {
+                if let Some(window) = app.get_webview_window("main") {
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
+                let _ = app.emit("region-capture", ());
             }
         })
         .build(app)?;
 
     Ok(())
+}
+
+/// Keep Cap2Clip to one process even when started from a second shortcut,
+/// installer, or copied executable.
+#[cfg(target_os = "windows")]
+fn ensure_single_instance() -> bool {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr::null_mut;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateMutexW(
+            attributes: *mut std::ffi::c_void,
+            initially_owned: i32,
+            name: *const u16,
+        ) -> *mut std::ffi::c_void;
+        fn GetLastError() -> u32;
+    }
+
+    const ERROR_ALREADY_EXISTS: u32 = 183;
+    let name: Vec<u16> = OsStr::new("Local\\Cap2Clip.SingleInstance")
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+
+    // Keep the handle open for the process lifetime. Windows releases it
+    // automatically when Cap2Clip exits.
+    let handle = unsafe { CreateMutexW(null_mut(), 0, name.as_ptr()) };
+    !handle.is_null() && unsafe { GetLastError() } != ERROR_ALREADY_EXISTS
 }

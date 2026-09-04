@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Screenshot App",
+  "productName": "Cap2Clip",
   "version": "1.0.0",
-  "identifier": "com.screenshot.app",
+  "identifier": "com.cap2clip.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -11,14 +11,27 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [],
     "trayIcon": {
       "iconPath": "icons/icon.png",
       "iconAsTemplate": true
     },
     "security": {
       "csp": null
-    }
+    },
+    "windows": [
+      {
+        "title": "Cap2Clip",
+        "width": 1200,
+        "height": 800,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": false,
+        "focus": false
+      }
+    ]
   },
   "bundle": {
     "active": true,

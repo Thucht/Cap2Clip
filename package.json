@@ -1,7 +1,10 @@
 {
-  "name": "screenshot-app",
+  "name": "cap2clip",
   "private": true,
   "version": "1.0.0",
+  "description": "A lightweight screenshot capture and annotation tool for Windows and macOS",
+  "author": "Cap2Clip Team",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",

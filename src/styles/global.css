@@ -188,26 +188,23 @@ html, body, #root {
   background: #0066d6;
 }
 
-/* Resize handles */
+/* Resize handles - only corners, 50% smaller */
 .handle {
   position: absolute;
-  width: 12px;
-  height: 12px;
+  width: 6px;
+  height: 6px;
   background: #007AFF;
-  border: 2px solid white;
+  border: 1.5px solid white;
   border-radius: 50%;
   pointer-events: all;
   z-index: 10010;
 }
 
-.handle-nw { top: -6px; left: -6px; cursor: nw-resize; }
-.handle-n  { top: -6px; left: 50%; margin-left: -6px; cursor: n-resize; }
-.handle-ne { top: -6px; right: -6px; cursor: ne-resize; }
-.handle-w  { top: 50%; margin-top: -6px; left: -6px; cursor: w-resize; }
-.handle-e  { top: 50%; margin-top: -6px; right: -6px; cursor: e-resize; }
-.handle-sw { bottom: -6px; left: -6px; cursor: sw-resize; }
-.handle-s  { bottom: -6px; left: 50%; margin-left: -6px; cursor: s-resize; }
-.handle-se { bottom: -6px; right: -6px; cursor: se-resize; }
+.handle-nw { top: -3px; left: -3px; cursor: nw-resize; }
+.handle-ne { top: -3px; right: -3px; cursor: ne-resize; }
+.handle-sw { bottom: -3px; left: -3px; cursor: sw-resize; }
+.handle-se { bottom: -3px; right: -3px; cursor: se-resize; }
+/* Midpoint handles (n, s, e, w) intentionally removed */
 
 /* ==================== MOVE ZONES (edge grab areas in annotating) ==================== */
 .move-zone {
@@ -221,6 +218,15 @@ html, body, #root {
 .move-zone-bottom { cursor: ns-resize; }
 .move-zone-left   { cursor: ew-resize; }
 .move-zone-right  { cursor: ew-resize; }
+
+/* Full interior drag layer (when move tool is active) */
+.interior-move {
+  position: absolute;
+  z-index: 10002;
+  cursor: move;
+  pointer-events: all;
+  background: transparent;
+}
 
 /* ==================== ANNOTATION AREA ==================== */
 .annotation-area {
@@ -240,65 +246,102 @@ html, body, #root {
   position: fixed;
   display: flex;
   align-items: center;
-  gap: 4px;
-  background: rgba(20, 20, 20, 0.92);
+  gap: 3px;
+  background: rgba(20, 20, 20, 0.95);
   backdrop-filter: blur(20px);
-  padding: 6px 10px;
-  border-radius: 12px;
+  padding: 4px 6px;
+  border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   z-index: 10002;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   transition: left 0.15s ease, top 0.15s ease;
+  color: #ddd;
 }
 
-/* Horizontal: drawing tools (snaps above/below selection) */
+/* Horizontal: actions (copy/save/cancel/undo/redo/delete/resize preset) */
 .annotation-toolbar-horizontal {
   flex-direction: row;
 }
 
-/* Vertical: drawing tools (snaps left/right of selection) */
+/* Vertical: drawing tools (move on top + color + stroke + font size) */
 .annotation-toolbar-vertical {
   flex-direction: column;
-  padding: 10px 6px;
+  padding: 6px 4px;
   max-height: 80vh;
-  overflow-y: auto;
+  overflow: visible;
 }
 
 .annotation-toolbar-vertical .toolbar-section.vertical {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
   align-items: center;
 }
 
-/* Action buttons in vertical toolbar are small square icons */
-.annotation-toolbar-vertical .action-btn {
-  width: 32px;
-  height: 32px;
-  padding: 0;
+/* Undo/Redo/Delete laid out horizontally */
+.toolbar-history-row {
   display: flex;
+  flex-direction: row;
+  gap: 2px;
   align-items: center;
-  justify-content: center;
-  font-size: 14px;
 }
 
-.tool-btn {
-  width: 32px;
-  height: 32px;
+/* Action buttons group horizontally */
+.toolbar-actions-row {
+  display: flex;
+  flex-direction: row;
+  gap: 2px;
+  align-items: center;
+}
+
+/* Compact icon-only buttons (no text, monochrome) */
+.action-btn-icon {
+  width: 26px;
+  height: 26px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: none;
   border: none;
-  color: #ccc;
-  font-size: 16px;
+  color: #ddd;
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: 5px;
   transition: all 0.15s;
+  padding: 0;
+}
+
+.action-btn-icon:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.action-btn-icon.active {
+  background: #007AFF;
+  color: #fff;
+}
+
+/* Preset button in toolbar */
+.preset-btn {
+  font-size: 0;
+}
+
+.tool-btn {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: #ddd;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: all 0.15s;
+  padding: 0;
 }
 
 .tool-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.12);
   color: white;
 }
 
@@ -322,59 +365,201 @@ html, body, #root {
   align-self: center;
 }
 
-/* Color picker popup opens to the right (for vertical toolbar) */
+.color-control {
+  position: relative;
+  z-index: 10020;
+}
+
+/* Color palette is a detached popup, never an expanded toolbar section. */
 .color-picker-popup-right {
   position: absolute;
-  left: 100%;
+  left: calc(100% + 8px);
   top: 50%;
   transform: translateY(-50%);
-  margin-left: 8px;
+  margin-left: 0;
   bottom: auto;
+  z-index: 10020;
+  pointer-events: all;
 }
 
-.color-swatch {
-  width: 20px;
-  height: 20px;
+.color-swatch-btn {
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
-  border: 2px solid transparent;
+  border: 2px solid rgba(255, 255, 255, 0.9);
   cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s;
 }
 
-.color-swatch.active {
-  border-color: white;
+.color-swatch-btn:hover {
+  transform: scale(1.15);
 }
 
 .color-picker-popup {
-  position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  margin-bottom: 8px;
-  background: rgba(20, 20, 20, 0.95);
-  padding: 8px;
-  border-radius: 8px;
-  display: grid;
-  grid-template-columns: repeat(4, 24px);
-  gap: 4px;
+  background: rgba(30, 30, 30, 0.98);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  padding: 10px;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 160px;
 }
 
-.stroke-width-btn {
+.color-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 22px);
+  gap: 6px;
+}
+
+.color-option {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.15s, border-color 0.15s;
+  position: relative;
+}
+
+.color-option:hover {
+  transform: scale(1.2);
+}
+
+.color-option.active {
+  border-color: white;
+  box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.5);
+}
+
+.color-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.color-custom-input {
   width: 28px;
   height: 28px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  background: none;
+  padding: 0;
+}
+
+.color-custom-input::-webkit-color-swatch-wrapper { padding: 0; }
+.color-custom-input::-webkit-color-swatch { border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px; }
+
+.color-custom-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 500;
+}
+
+/* Modern stroke slider - reduced 20% */
+.stroke-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 0;
+}
+
+.stroke-slider {
+  -webkit-appearance: slider-vertical;
+  appearance: slider-vertical;
+  width: 18px;
+  height: 64px;
+  writing-mode: bt-lr;
+  background: transparent;
+  cursor: pointer;
+}
+
+.stroke-slider::-webkit-slider-runnable-track {
+  width: 3px;
+  background: linear-gradient(to top, rgba(255,255,255,0.1), rgba(255,255,255,0.3));
+  border-radius: 2px;
+}
+
+.stroke-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 11px;
+  height: 11px;
+  background: #007AFF;
+  border-radius: 50%;
+  border: 2px solid white;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  margin-left: -4px;
+  cursor: pointer;
+}
+
+.stroke-slider::-moz-range-track {
+  width: 3px;
+  background: linear-gradient(to top, rgba(255,255,255,0.1), rgba(255,255,255,0.3));
+  border-radius: 2px;
+}
+
+.stroke-slider::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  background: #007AFF;
+  border-radius: 50%;
+  border: 2px solid white;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+
+.stroke-value {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 600;
+  min-width: 16px;
+  text-align: center;
+}
+
+/* Modern font size segment */
+.font-size-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 0;
+}
+
+.font-size-btn {
+  width: 24px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.06);
+  border: none;
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: none;
-  border: none;
-  color: #ccc;
-  cursor: pointer;
-  border-radius: 4px;
-  font-size: 11px;
+  transition: all 0.15s;
 }
 
-.stroke-width-btn.active {
-  background: #007AFF;
+.font-size-btn:hover {
+  background: rgba(0, 122, 255, 0.2);
   color: white;
+}
+
+.font-size-value {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 600;
+  min-width: 24px;
+  text-align: center;
 }
 
 .action-btn {

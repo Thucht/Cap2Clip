@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { AnnotationCanvas } from "./AnnotationCanvas";
 import { AnnotationToolbar } from "./AnnotationToolbar";
+import type { Tool } from "./AnnotationToolbar";
 import type { Preset, SelectionGeometry } from "../App";
 
 interface CaptureOverlayProps {
@@ -8,6 +9,8 @@ interface CaptureOverlayProps {
   fullScreenshot: string | null;
   selectionRect: SelectionGeometry | null;
   presets: Preset[];
+  activeTool: Tool;
+  onToolChange: (tool: Tool) => void;
   onEnterAnnotate: (rect: SelectionGeometry) => void;
   onCopy: (finalImage: string) => void;
   onSave: (finalImage: string) => void;
@@ -21,12 +24,14 @@ export function CaptureOverlay({
   fullScreenshot,
   selectionRect,
   presets,
+  activeTool,
+  onToolChange,
   onEnterAnnotate,
   onCopy,
   onSave,
   onCancel,
 }: CaptureOverlayProps) {
-  const [rect, setRect] = useState<SelectionGeometry | null>(null);
+  const [rect, setRect] = useState<SelectionGeometry | null>(selectionRect);
   const [isDragging, setIsDragging] = useState(false);
   const [startPoint, setStartPoint] = useState({ x: 0, y: 0 });
   const [isResizing, setIsResizing] = useState<string | null>(null);
@@ -272,22 +277,36 @@ export function CaptureOverlay({
   );
 
   // Render move zones (edge grab areas) for annotating phase
-  // These are separate from the selection-rect div since it has pointer-events:none
-  const BORDER_WIDTH = 8;
+  // In annotating phase: edges drag the selection, corners resize
+  // In selecting phase: edges extend the selection (call handleMouseDown with current rect as start)
+  const BORDER_WIDTH = 4;
   const renderMoveZones = () => {
     if (!rect) return null;
     const { x, y, width: w, height: h } = rect;
+    if (phase === "annotating") {
+      // In annotating: edges drag the selection
+      return (
+        <>
+          <div className="move-zone move-zone-top" style={{ left: x, top: y - BORDER_WIDTH / 2, width: w, height: BORDER_WIDTH }} onMouseDown={handleMoveStart} />
+          <div className="move-zone move-zone-bottom" style={{ left: x, top: y + h - BORDER_WIDTH / 2, width: w, height: BORDER_WIDTH }} onMouseDown={handleMoveStart} />
+          <div className="move-zone move-zone-left" style={{ left: x - BORDER_WIDTH / 2, top: y, width: BORDER_WIDTH, height: h }} onMouseDown={handleMoveStart} />
+          <div className="move-zone move-zone-right" style={{ left: x + w - BORDER_WIDTH / 2, top: y, width: BORDER_WIDTH, height: h }} onMouseDown={handleMoveStart} />
+        </>
+      );
+    }
+    return null;
+  };
+
+  // Interior overlay for "move" tool — covers the inside of the rect so any click drags the selection
+  const renderInteriorMove = () => {
+    if (!rect) return null;
+    const { x, y, width: w, height: h } = rect;
     return (
-      <>
-        {/* Top edge */}
-        <div className="move-zone move-zone-top" style={{ left: x, top: y - BORDER_WIDTH / 2, width: w, height: BORDER_WIDTH }} onMouseDown={handleMoveStart} />
-        {/* Bottom edge */}
-        <div className="move-zone move-zone-bottom" style={{ left: x, top: y + h - BORDER_WIDTH / 2, width: w, height: BORDER_WIDTH }} onMouseDown={handleMoveStart} />
-        {/* Left edge */}
-        <div className="move-zone move-zone-left" style={{ left: x - BORDER_WIDTH / 2, top: y, width: BORDER_WIDTH, height: h }} onMouseDown={handleMoveStart} />
-        {/* Right edge */}
-        <div className="move-zone move-zone-right" style={{ left: x + w - BORDER_WIDTH / 2, top: y, width: BORDER_WIDTH, height: h }} onMouseDown={handleMoveStart} />
-      </>
+      <div
+        className="interior-move"
+        style={{ left: x, top: y, width: w, height: h }}
+        onMouseDown={handleMoveStart}
+      />
     );
   };
 
@@ -383,6 +402,9 @@ export function CaptureOverlay({
             {renderHandles()}
           </div>
 
+          {/* Interior drag layer (when move tool is active) */}
+          {activeTool === "move" && renderInteriorMove()}
+
           {/* Move zones: edge grab areas for dragging the selection */}
           {renderMoveZones()}
 
@@ -394,6 +416,8 @@ export function CaptureOverlay({
             canvasRef={canvasRef}
             rect={rect}
             visible={true}
+            activeTool={activeTool}
+            onToolChange={onToolChange}
             presets={presets}
             activePreset={activePreset}
             onPresetSelect={handlePresetSelect}

@@ -43,6 +43,8 @@ pub struct AppSettings {
     pub last_save_dir: String,
     pub previous_selection: Option<SelectionGeometry>,
     pub presets: Vec<Preset>,
+    pub auto_start: bool,
+    pub shortcuts: std::collections::HashMap<String, String>,
 }
 
 impl Default for AppSettings {
@@ -63,6 +65,8 @@ impl Default for AppSettings {
             last_save_dir: default_save,
             previous_selection: None,
             presets: default_presets(),
+            auto_start: false,
+            shortcuts: std::collections::HashMap::new(),
         }
     }
 }
@@ -284,4 +288,70 @@ pub fn save_settings(settings: AppSettings) -> Result<(), String> {
     let path = get_settings_path();
     let content = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_auto_start(enabled: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::env;
+        use winreg::enums::*;
+        use winreg::RegKey;
+
+        let exe_path = env::current_exe().map_err(|e| e.to_string())?;
+        let exe_path_str = exe_path.to_string_lossy().to_string();
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let path = r"Software\Microsoft\Windows\CurrentVersion\Run";
+
+        if enabled {
+            let (key, _) = hkcu.create_subkey(path).map_err(|e| e.to_string())?;
+            key.set_value("ScreenshotApp", &exe_path_str)
+                .map_err(|e| e.to_string())?;
+        } else {
+            if let Ok(key) = hkcu.open_subkey_with_flags(path, KEY_WRITE) {
+                let _ = key.delete_value("ScreenshotApp");
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize)]
+pub struct UpdateInfo {
+    pub current_version: String,
+    pub latest_version: String,
+    pub update_available: bool,
+    pub download_url: Option<String>,
+    pub release_notes: Option<String>,
+}
+
+#[tauri::command]
+pub async fn check_for_update() -> Result<UpdateInfo, String> {
+    let current = env!("CARGO_PKG_VERSION").to_string();
+    let latest = current.clone();
+    Ok(UpdateInfo {
+        current_version: current,
+        latest_version: latest,
+        update_available: false,
+        download_url: None,
+        release_notes: None,
+    })
+}
+
+#[tauri::command]
+pub fn set_ignore_cursor_events(window: tauri::WebviewWindow, ignore: bool) -> Result<(), String> {
+    window.set_ignore_cursor_events(ignore).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn resize_window_to_fullscreen(window: tauri::WebviewWindow) -> Result<(), String> {
+    use tauri::{LogicalPosition, LogicalSize};
+    if let Some(monitor) = window.current_monitor().map_err(|e| e.to_string())? {
+        let pos = monitor.position();
+        let size = monitor.size();
+        window.set_position(LogicalPosition::new(pos.x as f64, pos.y as f64)).map_err(|e| e.to_string())?;
+        window.set_size(LogicalSize::new(size.width as f64, size.height as f64)).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
