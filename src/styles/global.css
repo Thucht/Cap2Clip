@@ -346,7 +346,53 @@ html, body, #root {
   flex-direction: column;
   gap: 2px;
   align-items: center;
+  position: relative;
 }
+
+.blur-picker-popup {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 36px;
+  width: 190px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(28, 28, 30, 0.98);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  z-index: 10030;
+}
+
+.blur-picker-title {
+  padding: 2px 6px 7px;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.blur-option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+  padding: 7px 6px;
+  border: 0;
+  border-radius: 7px;
+  color: #eee;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.blur-option:hover, .blur-option.active { background: rgba(0, 122, 255, 0.22); }
+.blur-option > span:last-child { display: flex; flex-direction: column; gap: 2px; }
+.blur-option strong { font-size: 11px; font-weight: 600; }
+.blur-option small { color: rgba(255, 255, 255, 0.55); font-size: 9px; line-height: 1.2; }
+.blur-option-preview { width: 28px; height: 28px; flex: 0 0 28px; border-radius: 5px; background: linear-gradient(135deg, #777, #ddd, #666); }
+.blur-soft { filter: blur(3px); }
+.blur-pixelate { background: repeating-conic-gradient(#888 0 25%, #ccc 0 50%) 0 / 8px 8px; }
+.blur-solid { background: #202024; border: 1px solid rgba(255,255,255,.25); }
 
 /* Toolbars scale from their top-left anchor; keep the measured box compact. */
 .annotation-toolbar-horizontal {

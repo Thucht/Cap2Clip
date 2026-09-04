@@ -51,6 +51,10 @@ export function AnnotationToolbar({
   const [strokeWidth, setStrokeWidth] = useState(() => Number(localStorage.getItem("cap2clip.strokeWidth")) || 3);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showPresetDropdown, setShowPresetDropdown] = useState(false);
+  const [showBlurPicker, setShowBlurPicker] = useState(false);
+  const [blurBrush, setBlurBrush] = useState(() => localStorage.getItem("cap2clip.blurBrush") || "soft");
+  const blurBrushRef = useRef(blurBrush);
+  blurBrushRef.current = blurBrush;
   const undoStack = useRef<string[]>([]);
   const redoStack = useRef<string[]>([]);
   const toolHandlersRef = useRef<{ down: (opt: any) => void; move: (opt: any) => void; up: () => void } | null>(null);
@@ -137,6 +141,13 @@ export function AnnotationToolbar({
     canvas.loadFromJSON(state).then(() => canvas.renderAll());
   }, []);
 
+  const selectBlurBrush = useCallback((next: string) => {
+    blurBrushRef.current = next;
+    setBlurBrush(next);
+    localStorage.setItem("cap2clip.blurBrush", next);
+    setShowBlurPicker(false);
+  }, []);
+
   const setTool = useCallback((tool: Tool) => {
     const canvas = getCanvas();
     if (!canvas) return;
@@ -183,11 +194,16 @@ export function AnnotationToolbar({
       return;
     }
 
-    if (tool === "pen" || tool === "highlight") {
+    if (tool === "pen" || tool === "highlight" || tool === "blur") {
       canvas.isDrawingMode = true;
       const brush = new PencilBrush(canvas);
-      brush.color = tool === "highlight" ? `${colorRef.current}66` : colorRef.current;
-      brush.width = tool === "highlight" ? strokeWidthRef.current * 4 : strokeWidthRef.current;
+      if (tool === "blur") {
+        brush.width = strokeWidthRef.current * (blurBrushRef.current === "soft" ? 3 : 2);
+        brush.color = blurBrushRef.current === "solid" ? "rgba(32,32,36,0.94)" : "rgba(120,120,120,0.45)";
+      } else {
+        brush.color = tool === "highlight" ? `${colorRef.current}66` : colorRef.current;
+        brush.width = tool === "highlight" ? strokeWidthRef.current * 4 : strokeWidthRef.current;
+      }
       canvas.freeDrawingBrush = brush;
       return;
     }
@@ -407,7 +423,7 @@ export function AnnotationToolbar({
     { id: "rect", icon: IconRect, label: "Rectangle" },
     { id: "ellipse", icon: IconEllipse, label: "Ellipse" },
     { id: "highlight", icon: IconHighlight, label: "Highlight" },
-    { id: "blur", icon: IconBlur, label: "Blur" },
+    { id: "blur", icon: IconBlur, label: "Blur — click to choose brush" },
     { id: "text", icon: IconText, label: "Text" },
   ];
 
@@ -495,13 +511,36 @@ export function AnnotationToolbar({
               <button
                 key={tool.id}
                 className={`tool-btn ${activeTool === tool.id ? "active" : ""}`}
-                onClick={() => setTool(tool.id)}
+                onClick={() => {
+                  setTool(tool.id);
+                  if (tool.id === "blur") setShowBlurPicker((open) => !open);
+                }}
                 title={tool.label}
               >
                 <Icon />
               </button>
             );
           })}
+          {showBlurPicker && activeTool === "blur" && (
+            <div className="blur-picker-popup" onMouseDown={(e) => e.stopPropagation()}>
+              <div className="blur-picker-title">Blur brush</div>
+              {[
+                ["soft", "Soft blur", "Smooth Gaussian-style blur"],
+                ["pixelate", "Pixelate", "Mosaic blocks for strong redaction"],
+                ["solid", "Solid mask", "Opaque cover for sensitive data"],
+              ].map(([id, label, description]) => (
+                <button
+                  key={id}
+                  className={`blur-option ${blurBrush === id ? "active" : ""}`}
+                  onClick={() => selectBlurBrush(id)}
+                  title={description}
+                >
+                  <span className={`blur-option-preview blur-${id}`} />
+                  <span><strong>{label}</strong><small>{description}</small></span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="toolbar-divider toolbar-divider-h" />
