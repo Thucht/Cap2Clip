@@ -129,11 +129,25 @@ export const IconMove = (): JSX.Element => (
 );
 
 // Hand cursor for editing existing annotations
-export const IconResize = (): JSX.Element => (
+export const IconEdit = (): JSX.Element => (
   <svg {...iconProps}>
     <path d="M7 11V5a1.5 1.5 0 0 1 3 0v5" />
     <path d="M10 10V3.5a1.5 1.5 0 0 1 3 0V10" />
     <path d="M13 10V5a1.5 1.5 0 0 1 3 0v6" />
     <path d="M16 11V8.5a1.5 1.5 0 0 1 3 0v5.2c0 4.6-2.8 7.3-6.8 7.3h-1.1c-2.1 0-3.2-.8-4.4-2.4L3.2 14a1.5 1.5 0 0 1 2.4-1.8L7 14V11" />
+  </svg>
+);
+
+// Resize preset icon: crop corners with outward arrows
+export const IconResizePreset = (): JSX.Element => (
+  <svg {...iconProps}>
+    <polyline points="8 3 3 3 3 8" />
+    <polyline points="16 3 21 3 21 8" />
+    <polyline points="8 21 3 21 3 16" />
+    <polyline points="16 21 21 21 21 16" />
+    <line x1="3" y1="3" x2="9" y2="9" />
+    <line x1="21" y1="3" x2="15" y2="9" />
+    <line x1="3" y1="21" x2="9" y2="15" />
+    <line x1="21" y1="21" x2="15" y2="15" />
   </svg>
 );

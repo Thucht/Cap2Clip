@@ -5,7 +5,7 @@ import type { Preset, SelectionGeometry } from "../App";
 import {
   IconCopy, IconSave, IconCancel, IconUndo, IconRedo, IconTrash,
   IconPen, IconLine, IconArrow, IconRect, IconEllipse, IconHighlight, IconBlur, IconText,
-  IconMove, IconResize,
+  IconMove, IconEdit, IconResizePreset,
 } from "./icons";
 
 export type Tool = "move" | "edit" | "select" | "pen" | "line" | "arrow" | "rect" | "ellipse" | "highlight" | "blur" | "text";
@@ -397,7 +397,7 @@ export function AnnotationToolbar({
   // Tools list — move on top as requested
   const tools: { id: Tool; icon: () => JSX.Element; label: string }[] = [
     { id: "move", icon: IconMove, label: "Drag selection" },
-    { id: "edit", icon: IconResize, label: "Edit annotations" },
+    { id: "edit", icon: IconEdit, label: "Edit annotations" },
     { id: "pen", icon: IconPen, label: "Pen" },
     { id: "line", icon: IconLine, label: "Line" },
     { id: "arrow", icon: IconArrow, label: "Arrow" },
@@ -454,7 +454,7 @@ export function AnnotationToolbar({
                   onClick={(e) => { e.stopPropagation(); setShowPresetDropdown(!showPresetDropdown); }}
                   title="Resize preset"
                 >
-                  <IconResize />
+                  <IconResizePreset />
                 </button>
                 {showPresetDropdown && (
                   <div className="preset-dropdown-menu" onMouseDown={(e) => e.stopPropagation()}>
