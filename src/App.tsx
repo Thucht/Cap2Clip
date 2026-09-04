@@ -200,20 +200,16 @@ function App() {
   }, []);
 
   const handleSettingsSave = useCallback(async (newSettings: AppSettings) => {
-    setSettings(newSettings);
     try {
       await invoke("save_settings", { settings: newSettings });
-      // Apply auto-start setting
-      try {
-        await invoke("set_auto_start", { enabled: newSettings.auto_start });
-      } catch (e) {
-        console.warn("set_auto_start not implemented yet:", e);
-      }
+      setSettings(newSettings);
+      await invoke("set_auto_start", { enabled: newSettings.auto_start });
+      setPhase("idle");
+      getCurrentWindow().hide();
     } catch (e) {
+      // Keep the settings dialog open when persistence or auto-start fails.
       console.error("Failed to save settings:", e);
     }
-    setPhase("idle");
-    getCurrentWindow().hide();
   }, []);
 
   useEffect(() => {

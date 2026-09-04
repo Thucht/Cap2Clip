@@ -8,8 +8,17 @@ interface SettingsPanelProps {
   onClose: () => void;
 }
 
+function normalizeSettings(settings: AppSettings): AppSettings {
+  const presets = Array.isArray(settings.presets) ? settings.presets.slice().sort((a, b) => a.order - b.order) : [];
+  return {
+    ...settings,
+    presets: presets.map((preset, order) => ({ ...preset, order })),
+    shortcuts: { ...(settings.shortcuts || {}) },
+  };
+}
+
 export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps) {
-  const [local, setLocal] = useState<AppSettings>(JSON.parse(JSON.stringify(settings)));
+  const [local, setLocal] = useState<AppSettings>(() => normalizeSettings(settings));
   const [newPresetName, setNewPresetName] = useState("");
   const [newPresetW, setNewPresetW] = useState("");
   const [newPresetH, setNewPresetH] = useState("");
@@ -18,7 +27,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
   const [activeTab, setActiveTab] = useState<"general" | "shortcuts" | "presets">("general");
 
   useEffect(() => {
-    setLocal(JSON.parse(JSON.stringify(settings)));
+    setLocal(normalizeSettings(settings));
   }, [settings]);
 
   const updateShortcuts = (updates: { [key: string]: string }) => {
@@ -70,23 +79,21 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
       is_builtin: false,
     };
 
-    setLocal({ ...local, presets: [...local.presets, newPreset] });
+    setLocal((current) => ({ ...current, presets: [...current.presets, newPreset] }));
     setNewPresetName("");
     setNewPresetW("");
     setNewPresetH("");
   };
 
   const deletePreset = (id: string) => {
-    setLocal({ ...local, presets: local.presets.filter((p) => p.id !== id) });
+    setLocal((current) => ({ ...current, presets: current.presets.filter((p) => p.id !== id) }));
   };
 
   const togglePreset = (id: string) => {
-    setLocal({
-      ...local,
-      presets: local.presets.map((p) =>
-        p.id === id ? { ...p, enabled: !p.enabled } : p
-      ),
-    });
+    setLocal((current) => ({
+      ...current,
+      presets: current.presets.map((p) => p.id === id ? { ...p, enabled: !p.enabled } : p),
+    }));
   };
 
   const movePreset = (id: string, direction: -1 | 1) => {
@@ -151,10 +158,10 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
           </div>}
           {activeTab === "presets" && <div className="settings-section">
             <h3>Capture presets</h3><p className="settings-help">Enable, reorder, or remove capture sizes.</p>
-            <div className="preset-list-settings">{local.presets.slice().sort((a, b) => a.order - b.order).map((preset) => (
+            <div className="preset-list-settings">{local.presets.slice().sort((a, b) => a.order - b.order).map((preset, index) => (
               <div key={preset.id} className={`preset-row ${!preset.enabled ? "disabled" : ""}`}>
                 <span className="preset-name">{preset.name}</span><span className="preset-dims">{preset.type === "aspect_ratio" ? `Ratio ${preset.width}:${preset.height}` : `${preset.width}×${preset.height}`}</span>
-                <div className="preset-actions"><button onClick={() => movePreset(preset.id, -1)} title="Move up" disabled={preset.order === 0}>↑</button><button onClick={() => movePreset(preset.id, 1)} title="Move down" disabled={preset.order === local.presets.length - 1}>↓</button><button onClick={() => togglePreset(preset.id)} title={preset.enabled ? "Disable" : "Enable"}>{preset.enabled ? "✓" : "○"}</button>{!preset.is_builtin && <button onClick={() => deletePreset(preset.id)} title="Delete">×</button>}</div>
+                <div className="preset-actions"><button onClick={() => movePreset(preset.id, -1)} title="Move up" disabled={index === 0}>↑</button><button onClick={() => movePreset(preset.id, 1)} title="Move down" disabled={index === local.presets.length - 1}>↓</button><button onClick={() => togglePreset(preset.id)} title={preset.enabled ? "Disable" : "Enable"}>{preset.enabled ? "✓" : "○"}</button>{!preset.is_builtin && <button onClick={() => deletePreset(preset.id)} title="Delete">×</button>}</div>
               </div>))}</div>
             <h4>Add custom preset</h4><div className="preset-form"><input placeholder="Name" value={newPresetName} onChange={(e) => setNewPresetName(e.target.value)} /><select value={newPresetType} onChange={(e) => setNewPresetType(e.target.value as "fixed_size" | "aspect_ratio")}><option value="fixed_size">Fixed size</option><option value="aspect_ratio">Aspect ratio</option></select><input type="number" min="1" placeholder="Width" value={newPresetW} onChange={(e) => setNewPresetW(e.target.value)} /><input type="number" min="1" placeholder="Height" value={newPresetH} onChange={(e) => setNewPresetH(e.target.value)} /><button className="settings-secondary-btn" onClick={addPreset}>Add preset</button></div>
           </div>}
