@@ -53,7 +53,7 @@ export const AnnotationCanvas = forwardRef<any, AnnotationCanvasProps>(
         fabricRef.current = null;
         imgRef.current = null;
       };
-    }, [fullScreenshot, rect]);
+    }, [fullScreenshot]);
 
     // Update background when rect changes (crop region)
     useEffect(() => {

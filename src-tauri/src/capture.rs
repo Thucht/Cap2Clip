@@ -136,6 +136,107 @@ pub fn save_screenshot(
     Ok(file_path_str)
 }
 
+/// Save multiple screenshots. The dialog is opened once; additional images
+/// are written beside the selected file with numbered names.
+#[tauri::command]
+pub fn save_screenshots(
+    app: AppHandle,
+    image_data: Vec<String>,
+    last_save_dir: String,
+) -> Result<String, String> {
+    if image_data.is_empty() {
+        return Err("No images to save".to_string());
+    }
+
+    let decoded: Result<Vec<Vec<u8>>, String> = image_data
+        .iter()
+        .map(|data| {
+            let base64_data = data
+                .strip_prefix("data:image/png;base64,")
+                .ok_or("Invalid data URL".to_string())?;
+            base64::engine::general_purpose::STANDARD
+                .decode(base64_data)
+                .map_err(|e| e.to_string())
+        })
+        .collect();
+    let decoded = decoded?;
+
+    let filename = format!("Screenshot_{}.png", get_timestamp());
+    let selected = app
+        .dialog()
+        .file()
+        .add_filter("PNG Image", &["png"])
+        .set_file_name(&filename)
+        .set_directory(&last_save_dir)
+        .blocking_save_file()
+        .ok_or("Save cancelled".to_string())?;
+    let selected_path = std::path::PathBuf::from(selected.to_string());
+    let parent = selected_path
+        .parent()
+        .ok_or("Invalid save path".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let stem = selected_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("Screenshot");
+
+    for (index, bytes) in decoded.iter().enumerate() {
+        let path = if index == 0 {
+            selected_path.clone()
+        } else {
+            parent.join(format!("{}_{}.png", stem, index + 1))
+        };
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    }
+
+    Ok(selected_path.to_string_lossy().to_string())
+}
+
+/// Save multiple screenshots without opening a dialog.
+#[tauri::command]
+pub fn save_screenshots_quick(
+    image_data: Vec<String>,
+    last_save_dir: String,
+) -> Result<String, String> {
+    if image_data.is_empty() {
+        return Err("No images to save".to_string());
+    }
+
+    let directory = if last_save_dir.trim().is_empty() {
+        dirs::picture_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("Screenshots")
+    } else {
+        std::path::PathBuf::from(last_save_dir)
+    };
+    std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+
+    let stem = format!("Screenshot_{}", get_timestamp());
+    let mut first_path = None;
+    for (index, data) in image_data.iter().enumerate() {
+        let base64_data = data
+            .strip_prefix("data:image/png;base64,")
+            .ok_or("Invalid data URL".to_string())?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(base64_data)
+            .map_err(|e| e.to_string())?;
+        let suffix = if index == 0 {
+            String::new()
+        } else {
+            format!("_{}", index + 1)
+        };
+        let path = directory.join(format!("{}{}.png", stem, suffix));
+        if index == 0 {
+            first_path = Some(path.clone());
+        }
+        std::fs::write(path, bytes).map_err(|e| e.to_string())?;
+    }
+
+    first_path
+        .map(|path| path.to_string_lossy().to_string())
+        .ok_or("No images to save".to_string())
+}
+
 fn get_timestamp() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

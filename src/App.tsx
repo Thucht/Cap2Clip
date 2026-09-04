@@ -137,26 +137,57 @@ function App() {
     [selectionRect, settings]
   );
 
-  const handleSave = useCallback(
-    async (finalImage: string) => {
+  const handleSaveDialog = useCallback(
+    async (images: string[]) => {
+      if (images.length === 0) return;
       try {
-        const result = await invoke<string>("save_screenshot", {
-          dataUrl: finalImage,
-          defaultPath: settings.last_save_dir,
+        const result = await invoke<string>("save_screenshots", {
+          imageData: images,
+          lastSaveDir: settings.last_save_dir,
         });
-        if (selectionRect && result) {
-          const dir = result.substring(0, result.lastIndexOf("\\") + 1) || result.substring(0, result.lastIndexOf("/") + 1);
-          const updated = { ...settings, previous_selection: selectionRect, last_save_dir: dir };
-          setSettings(updated);
-          await invoke("save_settings", { settings: updated });
-        }
+        const dir = result.substring(0, Math.max(result.lastIndexOf("\\"), result.lastIndexOf("/")) + 1);
+        const updated = {
+          ...settings,
+          previous_selection: selectionRect,
+          last_save_dir: dir || settings.last_save_dir,
+        };
+        setSettings(updated);
+        await invoke("save_settings", { settings: updated });
+        setPhase("idle");
+        setFullScreenshot(null);
+        setSelectionRect(null);
+        getCurrentWindow().hide();
       } catch (e) {
-        console.error("Save failed:", e);
+        // A cancelled dialog must leave the annotation session open.
+        console.error("Save dialog failed or was cancelled:", e);
       }
-      setPhase("idle");
-      setFullScreenshot(null);
-      setSelectionRect(null);
-      getCurrentWindow().hide();
+    },
+    [selectionRect, settings]
+  );
+
+  const handleQuickSave = useCallback(
+    async (images: string[]) => {
+      if (images.length === 0) return;
+      try {
+        const result = await invoke<string>("save_screenshots_quick", {
+          imageData: images,
+          lastSaveDir: settings.last_save_dir,
+        });
+        const dir = result.substring(0, Math.max(result.lastIndexOf("\\"), result.lastIndexOf("/")) + 1);
+        const updated = {
+          ...settings,
+          previous_selection: selectionRect,
+          last_save_dir: dir || settings.last_save_dir,
+        };
+        setSettings(updated);
+        await invoke("save_settings", { settings: updated });
+        setPhase("idle");
+        setFullScreenshot(null);
+        setSelectionRect(null);
+        getCurrentWindow().hide();
+      } catch (e) {
+        console.error("Quick save failed:", e);
+      }
     },
     [selectionRect, settings]
   );
@@ -206,7 +237,8 @@ function App() {
           onToolChange={setActiveTool as (tool: Tool) => void}
           onEnterAnnotate={handleEnterAnnotate}
           onCopy={handleCopy}
-          onSave={handleSave}
+          onSaveDialog={handleSaveDialog}
+          onQuickSave={handleQuickSave}
           onCancel={handleCancel}
           shortcutCopy={settings.shortcut_copy}
           shortcutSave={settings.shortcut_save}

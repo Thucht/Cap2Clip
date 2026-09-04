@@ -188,23 +188,60 @@ html, body, #root {
   background: #0066d6;
 }
 
-/* Resize handles - only corners, 50% smaller */
+/* Resize handles: enlarged transparent hit targets with a centered node. */
 .handle {
   position: absolute;
-  width: 6px;
-  height: 6px;
-  background: #007AFF;
-  border: 1.5px solid white;
+  width: 20px;
+  height: 20px;
+  background: transparent;
+  border: 0;
   border-radius: 50%;
   pointer-events: all;
   z-index: 10010;
 }
 
-.handle-nw { top: -3px; left: -3px; cursor: nw-resize; }
-.handle-ne { top: -3px; right: -3px; cursor: ne-resize; }
-.handle-sw { bottom: -3px; left: -3px; cursor: sw-resize; }
-.handle-se { bottom: -3px; right: -3px; cursor: se-resize; }
-/* Midpoint handles (n, s, e, w) intentionally removed */
+.handle::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 5px;
+  width: 10px;
+  height: 10px;
+  background: #007AFF;
+  border: 1.5px solid white;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.handle-nw { top: -10px; left: -10px; cursor: nw-resize; }
+.handle-n  { top: -10px; left: calc(50% - 10px); cursor: ns-resize; }
+.handle-ne { top: -10px; right: -10px; cursor: ne-resize; }
+.handle-w  { top: calc(50% - 10px); left: -10px; cursor: ew-resize; }
+.handle-e  { top: calc(50% - 10px); right: -10px; cursor: ew-resize; }
+.handle-sw { bottom: -10px; left: -10px; cursor: sw-resize; }
+.handle-s  { bottom: -10px; left: calc(50% - 10px); cursor: ns-resize; }
+.handle-se { bottom: -10px; right: -10px; cursor: se-resize; }
+
+/* Previously selected regions remain visible while the active region is edited. */
+.multi-region-outline {
+  position: absolute;
+  border: 1px solid rgba(52, 199, 89, 0.9);
+  box-shadow: 0 0 0 1px rgba(52, 199, 89, 0.25);
+  pointer-events: none;
+  z-index: 10003;
+}
+
+.multi-region-outline span {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: white;
+  background: rgba(52, 199, 89, 0.85);
+  font-size: 10px;
+  font-weight: 700;
+}
 
 /* ==================== MOVE ZONES (edge grab areas in annotating) ==================== */
 .move-zone {
@@ -323,6 +360,27 @@ html, body, #root {
 /* Preset button in toolbar */
 .preset-btn {
   font-size: 0;
+}
+
+/* Compact multi-region checkbox in the horizontal action toolbar. */
+.multi-region-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 5px;
+  color: #ddd;
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.multi-region-toggle input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: #007AFF;
+  cursor: pointer;
 }
 
 .tool-btn {
@@ -496,7 +554,7 @@ html, body, #root {
   border-radius: 50%;
   border: 2px solid white;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
-  margin-left: -4px;
+  margin-left: 0;
   cursor: pointer;
 }
 

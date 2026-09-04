@@ -46,6 +46,8 @@ fn main() {
             capture::capture_full_screen,
             capture::capture_region,
             capture::save_screenshot,
+            capture::save_screenshots,
+            capture::save_screenshots_quick,
             settings::load_settings,
             settings::save_settings,
             settings::set_auto_start,

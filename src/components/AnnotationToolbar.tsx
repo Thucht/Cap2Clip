@@ -12,8 +12,10 @@ export type Tool = "move" | "select" | "pen" | "line" | "arrow" | "rect" | "elli
 
 interface AnnotationToolbarProps {
   onCopy: () => void;
-  onSave: () => void;
+  onSaveDialog: () => void;
   onCancel: () => void;
+  multiRegion: boolean;
+  onMultiRegionChange: (enabled: boolean) => void;
   canvasRef: React.MutableRefObject<any>;
   rect: SelectionGeometry;
   visible: boolean;
@@ -33,8 +35,10 @@ const TOOLBAR_GAP = 10;
 
 export function AnnotationToolbar({
   onCopy,
-  onSave,
+  onSaveDialog,
   onCancel,
+  multiRegion,
+  onMultiRegionChange,
   canvasRef,
   rect,
   visible,
@@ -391,7 +395,15 @@ export function AnnotationToolbar({
       >
         <div className="toolbar-section toolbar-actions-row">
           <button className="action-btn-icon" onClick={onCopy} title="Copy (Ctrl+C)"><IconCopy /></button>
-          <button className="action-btn-icon" onClick={onSave} title="Save (Ctrl+S)"><IconSave /></button>
+          <button className="action-btn-icon" onClick={onSaveDialog} title="Save as… (choose path)"><IconSave /></button>
+          <label className="multi-region-toggle" title="Create and save each selected region as a separate PNG">
+            <input
+              type="checkbox"
+              checked={multiRegion}
+              onChange={(e) => onMultiRegionChange(e.target.checked)}
+            />
+            <span>Multi</span>
+          </label>
           <button className="action-btn-icon" onClick={onCancel} title="Cancel (Esc)"><IconCancel /></button>
         </div>
 

@@ -13,7 +13,8 @@ interface CaptureOverlayProps {
   onToolChange: (tool: Tool) => void;
   onEnterAnnotate: (rect: SelectionGeometry) => void;
   onCopy: (finalImage: string) => void;
-  onSave: (finalImage: string) => void;
+  onSaveDialog: (images: string[]) => void;
+  onQuickSave: (images: string[]) => void;
   onCancel: () => void;
   shortcutCopy: string;
   shortcutSave: string;
@@ -28,7 +29,8 @@ export function CaptureOverlay({
   onToolChange,
   onEnterAnnotate,
   onCopy,
-  onSave,
+  onSaveDialog,
+  onQuickSave,
   onCancel,
 }: CaptureOverlayProps) {
   const [rect, setRect] = useState<SelectionGeometry | null>(selectionRect);
@@ -40,6 +42,8 @@ export function CaptureOverlay({
   const [moveStart, setMoveStart] = useState({ x: 0, y: 0, rx: 0, ry: 0 });
   const [activePreset, setActivePreset] = useState<Preset | null>(null);
   const [showPresetDropdown, setShowPresetDropdown] = useState(false);
+  const [multiRegion, setMultiRegion] = useState(false);
+  const [regionRects, setRegionRects] = useState<SelectionGeometry[]>(selectionRect ? [selectionRect] : []);
   const canvasRef = useRef<any>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
 
@@ -51,8 +55,10 @@ export function CaptureOverlay({
     if (phase === "selecting") {
       if (selectionRect) {
         setRect(selectionRect);
+        setRegionRects([selectionRect]);
       } else {
         setRect(null);
+        setRegionRects([]);
       }
       setIsDragging(false);
       setIsResizing(null);
@@ -65,6 +71,7 @@ export function CaptureOverlay({
   useEffect(() => {
     if (phase === "annotating" && selectionRect) {
       setRect(selectionRect);
+      setRegionRects((current) => current.length > 0 ? current : [selectionRect]);
     }
   }, [phase, selectionRect]);
 
@@ -92,9 +99,19 @@ export function CaptureOverlay({
     return { w: Math.round(w), h: Math.round(h) };
   }, [getAspectRatio]);
 
-  // Mouse down on overlay background (selecting phase only - create new selection)
+  const setActiveRect = useCallback((next: SelectionGeometry) => {
+    setRect(next);
+    if (phase === "annotating" && multiRegion) {
+      setRegionRects((current) => current.map((item, index) =>
+        index === current.length - 1 ? next : item
+      ));
+    }
+  }, [phase, multiRegion]);
+
+  // Background drag creates a new selection. In multi-region mode this also
+  // preserves earlier regions in regionRects.
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (phase !== "selecting") return;
+    if (phase !== "selecting" && phase !== "annotating") return;
 
     if (rect) {
       const inX = e.clientX >= rect.x && e.clientX <= rect.x + rect.width;
@@ -102,6 +119,7 @@ export function CaptureOverlay({
       if (inX && inY) return;
     }
 
+    e.preventDefault();
     setIsDragging(true);
     setStartPoint({ x: e.clientX, y: e.clientY });
     setRect({ x: e.clientX, y: e.clientY, width: 0, height: 0 });
@@ -135,13 +153,13 @@ export function CaptureOverlay({
       if (isResizing === "nw" || isResizing === "w" || isResizing === "sw") nx = rx + rw - nw;
       if (isResizing === "nw" || isResizing === "n" || isResizing === "ne") ny = ry + rh - nh;
 
-      if (nw >= 10 && nh >= 10) setRect(clamp(nx, ny, nw, nh));
+      if (nw >= 10 && nh >= 10) setActiveRect(clamp(nx, ny, nw, nh));
     }
     // Move
     else if (isMoving) {
       const dx = e.clientX - moveStart.x;
       const dy = e.clientY - moveStart.y;
-      setRect(clamp(moveStart.rx + dx, moveStart.ry + dy, rect.width, rect.height));
+      setActiveRect(clamp(moveStart.rx + dx, moveStart.ry + dy, rect.width, rect.height));
     }
     // Drag new selection
     else if (isDragging) {
@@ -151,16 +169,25 @@ export function CaptureOverlay({
       const h = Math.abs(e.clientY - startPoint.y);
       setRect(clamp(x, y, w, h));
     }
-  }, [rect, isResizing, isMoving, isDragging, startPoint, resizeStart, moveStart, clamp, constrainRatio]);
+  }, [rect, isResizing, isMoving, isDragging, startPoint, resizeStart, moveStart, clamp, constrainRatio, setActiveRect]);
 
   const handleMouseUp = useCallback(() => {
     if (isDragging && rect && rect.width > 5 && rect.height > 5) {
+      if (phase === "annotating" && multiRegion) {
+        setRegionRects((current) => [...current, rect]);
+      } else {
+        setRegionRects([rect]);
+      }
       onEnterAnnotate(rect);
+    } else if ((isResizing || isMoving) && rect && rect.width >= 10 && rect.height >= 10) {
+      onEnterAnnotate(rect);
+    } else if (isDragging && phase === "annotating") {
+      setRect(regionRects[regionRects.length - 1] || null);
     }
     setIsDragging(false);
     setIsResizing(null);
     setIsMoving(false);
-  }, [isDragging, rect, onEnterAnnotate]);
+  }, [isDragging, isResizing, isMoving, rect, phase, multiRegion, regionRects, onEnterAnnotate]);
 
   // Resize handle mouse down - works in BOTH phases
   const handleResizeStart = useCallback((handle: string, e: React.MouseEvent) => {
@@ -213,7 +240,52 @@ export function CaptureOverlay({
     }
   }, [screenW, screenH, clamp, phase, onEnterAnnotate]);
 
-  // Actions - capture happens HERE
+  const cropRegion = useCallback((region: SelectionGeometry): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      if (!fullScreenshot) {
+        reject(new Error("No screenshot available"));
+        return;
+      }
+      const image = new Image();
+      image.onload = () => {
+        const crop = document.createElement("canvas");
+        crop.width = Math.max(1, Math.round(region.width));
+        crop.height = Math.max(1, Math.round(region.height));
+        const context = crop.getContext("2d");
+        if (!context) {
+          reject(new Error("Could not create crop canvas"));
+          return;
+        }
+        context.drawImage(
+          image,
+          region.x, region.y, region.width, region.height,
+          0, 0, crop.width, crop.height
+        );
+        resolve(crop.toDataURL("image/png"));
+      };
+      image.onerror = () => reject(new Error("Could not load screenshot"));
+      image.src = fullScreenshot;
+    });
+  }, [fullScreenshot]);
+
+  const getExportImages = useCallback(async (): Promise<string[]> => {
+    if (!multiRegion || regionRects.length <= 1) {
+      if (!canvasRef.current?.toDataURL) return [];
+      return [canvasRef.current.toDataURL({ format: "png", multiplier: 1 })];
+    }
+
+    const images: string[] = [];
+    for (let index = 0; index < regionRects.length; index += 1) {
+      const isActiveRegion = index === regionRects.length - 1;
+      if (isActiveRegion && canvasRef.current?.toDataURL) {
+        images.push(canvasRef.current.toDataURL({ format: "png", multiplier: 1 }));
+      } else {
+        images.push(await cropRegion(regionRects[index]));
+      }
+    }
+    return images;
+  }, [multiRegion, regionRects, cropRegion]);
+
   const handleCopyClick = useCallback(() => {
     if (canvasRef.current?.toDataURL) {
       const dataUrl = canvasRef.current.toDataURL({ format: "png", multiplier: 1 });
@@ -221,25 +293,34 @@ export function CaptureOverlay({
     }
   }, [onCopy]);
 
-  const handleSaveClick = useCallback(() => {
-    if (canvasRef.current?.toDataURL) {
-      const dataUrl = canvasRef.current.toDataURL({ format: "png", multiplier: 1 });
-      onSave(dataUrl);
+  const handleSaveClick = useCallback(async () => {
+    try {
+      onSaveDialog(await getExportImages());
+    } catch (error) {
+      console.error("Preparing save failed:", error);
     }
-  }, [onSave]);
+  }, [getExportImages, onSaveDialog]);
+
+  const handleQuickSaveClick = useCallback(async () => {
+    try {
+      onQuickSave(await getExportImages());
+    } catch (error) {
+      console.error("Preparing quick save failed:", error);
+    }
+  }, [getExportImages, onQuickSave]);
 
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (phase === "annotating") {
         if ((e.ctrlKey || e.metaKey) && e.key === "c") { e.preventDefault(); handleCopyClick(); }
-        if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); handleSaveClick(); }
+        if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); handleQuickSaveClick(); }
       }
       if (e.key === "Escape") { e.preventDefault(); onCancel(); }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [phase, handleCopyClick, handleSaveClick, onCancel]);
+  }, [phase, handleCopyClick, handleQuickSaveClick, onCancel]);
 
   // Render backdrops (darkened areas outside selection)
   const renderBackdrops = () => {
@@ -276,26 +357,9 @@ export function CaptureOverlay({
     </>
   );
 
-  // Render move zones (edge grab areas) for annotating phase
-  // In annotating phase: edges drag the selection, corners resize
-  // In selecting phase: edges extend the selection (call handleMouseDown with current rect as start)
-  const BORDER_WIDTH = 4;
-  const renderMoveZones = () => {
-    if (!rect) return null;
-    const { x, y, width: w, height: h } = rect;
-    if (phase === "annotating") {
-      // In annotating: edges drag the selection
-      return (
-        <>
-          <div className="move-zone move-zone-top" style={{ left: x, top: y - BORDER_WIDTH / 2, width: w, height: BORDER_WIDTH }} onMouseDown={handleMoveStart} />
-          <div className="move-zone move-zone-bottom" style={{ left: x, top: y + h - BORDER_WIDTH / 2, width: w, height: BORDER_WIDTH }} onMouseDown={handleMoveStart} />
-          <div className="move-zone move-zone-left" style={{ left: x - BORDER_WIDTH / 2, top: y, width: BORDER_WIDTH, height: h }} onMouseDown={handleMoveStart} />
-          <div className="move-zone move-zone-right" style={{ left: x + w - BORDER_WIDTH / 2, top: y, width: BORDER_WIDTH, height: h }} onMouseDown={handleMoveStart} />
-        </>
-      );
-    }
-    return null;
-  };
+  // Edges are resize targets, never pan targets. The eight handles below
+  // provide enlarged hit areas; the interior is the only move surface.
+  const renderMoveZones = () => null;
 
   // Interior overlay for "move" tool — covers the inside of the rect so any click drags the selection
   const renderInteriorMove = () => {
@@ -377,9 +441,19 @@ export function CaptureOverlay({
       )}
 
       {/* ======== ANNOTATING PHASE ======== */}
-      {phase === "annotating" && fullScreenshot && rect && (
+      {phase === "annotating" && fullScreenshot && rect && !isDragging && (
         <>
           {renderBackdrops()}
+
+          {multiRegion && regionRects.slice(0, -1).map((region, index) => (
+            <div
+              key={`region-${index}`}
+              className="multi-region-outline"
+              style={{ left: region.x, top: region.y, width: region.width, height: region.height }}
+            >
+              <span>{index + 1}</span>
+            </div>
+          ))}
 
           {/* Annotation canvas - crops from fullScreenshot based on rect */}
           <div
@@ -411,8 +485,10 @@ export function CaptureOverlay({
           {/* Split toolbars: horizontal (actions) + vertical (drawing tools) */}
           <AnnotationToolbar
             onCopy={handleCopyClick}
-            onSave={handleSaveClick}
+            onSaveDialog={handleSaveClick}
             onCancel={onCancel}
+            multiRegion={multiRegion}
+            onMultiRegionChange={setMultiRegion}
             canvasRef={canvasRef}
             rect={rect}
             visible={true}
