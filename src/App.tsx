@@ -201,13 +201,14 @@ function App() {
 
   const handleSettingsSave = useCallback(async (newSettings: AppSettings) => {
     try {
+      // Persist the JSON first. If auto-start fails, keep the dialog open and
+      // do not pretend the whole settings transaction succeeded.
       await invoke("save_settings", { settings: newSettings });
-      setSettings(newSettings);
       await invoke("set_auto_start", { enabled: newSettings.auto_start });
+      setSettings(newSettings);
       setPhase("idle");
       getCurrentWindow().hide();
     } catch (e) {
-      // Keep the settings dialog open when persistence or auto-start fails.
       console.error("Failed to save settings:", e);
     }
   }, []);

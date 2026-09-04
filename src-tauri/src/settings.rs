@@ -268,18 +268,37 @@ fn get_settings_path() -> PathBuf {
 pub fn load_settings() -> Result<AppSettings, String> {
     let path = get_settings_path();
 
-    if path.exists() {
-        let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        // Merge with defaults to handle new fields added in updates
-        let mut settings: AppSettings = serde_json::from_str(&content)
-            .map_err(|e| e.to_string())?;
-        // Ensure presets exist even if old settings file doesn't have them
-        if settings.presets.is_empty() {
-            settings.presets = default_presets();
+    if !path.exists() {
+        return Ok(AppSettings::default());
+    }
+
+    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut value: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| e.to_string())?;
+    let defaults = serde_json::to_value(AppSettings::default()).map_err(|e| e.to_string())?;
+
+    // Merge defaults recursively so settings files from older versions remain
+    // loadable when new fields are added (notably the configurable shortcuts).
+    merge_json_defaults(&mut value, &defaults);
+    let mut settings: AppSettings = serde_json::from_value(value).map_err(|e| e.to_string())?;
+    if settings.presets.is_empty() {
+        settings.presets = default_presets();
+    }
+    settings.presets.sort_by_key(|preset| preset.order);
+    for (index, preset) in settings.presets.iter_mut().enumerate() {
+        preset.order = index as u32;
+    }
+    Ok(settings)
+}
+
+fn merge_json_defaults(value: &mut serde_json::Value, defaults: &serde_json::Value) {
+    if let (Some(value_object), Some(default_object)) = (value.as_object_mut(), defaults.as_object()) {
+        for (key, default_value) in default_object {
+            match value_object.get_mut(key) {
+                Some(value) => merge_json_defaults(value, default_value),
+                None => { value_object.insert(key.clone(), default_value.clone()); }
+            }
         }
-        Ok(settings)
-    } else {
-        Ok(AppSettings::default())
     }
 }
 
