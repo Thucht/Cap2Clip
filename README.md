@@ -1,15 +1,15 @@
 # Cap2Clip
 
-**Cap**ture and **Clip**board — A lightweight screenshot tool for Windows and macOS. Inspired by Lightshot, but lighter and faster.
+<p align="center">
+  <img src="icon.png" alt="Cap2Clip icon" width="96" />
+</p>
+
+<p align="center"><strong>Capture and Clip</strong> — a lightweight screenshot and annotation tool for Windows.</p>
 
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue)
 ![Rust](https://img.shields.io/badge/Rust-1.75+-orange)
 ![React](https://img.shields.io/badge/React-18-green)
 ![License](https://img.shields.io/badge/License-MIT-green)
-
-## Screenshots
-
-> *[Add screenshot images here]*
 
 ## Why Cap2Clip?
 
@@ -37,17 +37,17 @@
 
 **Option 1: MSI Installer** (recommended for system-wide install)
 ```
-Download: releases/Screenshot App_1.0.0_x64_en-US.msi
+Download: releases/Cap2Clip_1.0.0_x64_en-US.msi
 ```
 
 **Option 2: NSIS Setup**
 ```
-Download: releases/Screenshot App_1.0.0_x64-setup.exe
+Download: releases/Cap2Clip_1.0.0_x64-setup.exe
 ```
 
 **Option 3: Portable**
 ```
-Download: releases/screenshot-app.exe
+Download: releases/Cap2Clip.exe
 ```
 Run the `.exe` directly — no installation required.
 
@@ -103,9 +103,31 @@ Dimension presets let you quickly create captures with exact aspect ratios or si
 
 You can add your own presets in **Settings**:
 1. Click the system tray icon → Settings
-2. Go to **Capture Presets** section
+2. Go to **Settings → Presets** tab
 3. Enter a name, choose type (Fixed Size or Aspect Ratio), and dimensions
 4. Click **Add**
+
+## Blur / Pixelate roadmap
+
+The blur tool is currently **not production-ready**. The current UI exposes the intended brush modes, but exported images do not yet reliably apply a real pixel-level blur or mosaic effect. Do not use it as the only protection for sensitive information.
+
+### First realistic milestone
+
+1. Record each blur stroke as a path with brush mode, width, and bounds.
+2. Render the selected screenshot into an off-screen canvas.
+3. Rasterize the path into a mask, expand it by the brush radius, and process only masked pixels.
+4. Implement Gaussian blur and deterministic pixelation as separate compositing passes.
+5. Composite normal annotations above the processed image.
+6. Add automated export tests for diagonal, horizontal, short, and overlapping strokes.
+
+### Later milestones
+
+- Preview the exact export result while editing.
+- Support undo/redo and multi-region export without losing blur paths.
+- Add configurable blur strength and pixel block size.
+- Verify transparent/HiDPI screenshots and benchmark large captures.
+
+Until these milestones are complete, use the solid mask mode for sensitive data.
 
 ## Development
 
@@ -119,7 +141,7 @@ You can add your own presets in **Settings**:
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/cap2clip.git
+git clone https://github.com/Thucht/Cap2Clip.git
 cd cap2clip
 
 # Install dependencies
