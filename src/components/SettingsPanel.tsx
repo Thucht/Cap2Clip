@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useState } from "react";
+
 import type { AppSettings, Preset } from "../App";
 
 interface SettingsPanelProps {
@@ -15,27 +15,41 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
   const [newPresetH, setNewPresetH] = useState("");
   const [newPresetType, setNewPresetType] = useState<"fixed_size" | "aspect_ratio">("fixed_size");
   const [conflictError, setConflictError] = useState("");
-  const [updateStatus, setUpdateStatus] = useState<{ checking: boolean; result: any }>({ checking: false, result: null });
+  const [activeTab, setActiveTab] = useState<"general" | "shortcuts" | "presets">("general");
+
+  useEffect(() => {
+    setLocal(JSON.parse(JSON.stringify(settings)));
+  }, [settings]);
+
+  const updateShortcuts = (updates: { [key: string]: string }) => {
+    setLocal((current) => ({ ...current, shortcuts: { ...current.shortcuts, ...updates } }));
+  };
+
+  const updateField = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
+    setLocal((current) => ({ ...current, [key]: value }));
+  };
 
   const handleSave = () => {
-    // Validate shortcut conflicts
-    const shortcuts = [
-      { key: local.shortcut_region, label: "Region Capture" },
-      { key: local.shortcut_fullscreen, label: "Full Screen" },
-      { key: local.shortcut_copy, label: "Copy" },
-      { key: local.shortcut_save, label: "Save" },
-      { key: local.shortcut_cancel, label: "Cancel" },
-    ];
+    const entries = [
+      [local.shortcut_region, "Region Capture"],
+      [local.shortcut_fullscreen, "Full Screen"],
+      [local.shortcut_copy, "Copy"],
+      [local.shortcut_save, "Save"],
+      [local.shortcut_cancel, "Cancel"],
+      ...Object.entries(local.shortcuts || {}).map(([key, value]) => [value, key]),
+    ].map(([key, label]) => [String(key).trim().toLowerCase(), String(label)] as const)
+      .filter(([key]) => key.length > 0);
     const seen = new Map<string, string>();
-    for (const s of shortcuts) {
-      if (seen.has(s.key)) {
-        setConflictError(`Conflict: "${s.key}" is assigned to both "${seen.get(s.key)}" and "${s.label}"`);
+    for (const [key, label] of entries) {
+      if (seen.has(key)) {
+        setConflictError(`Conflict: "${key}" is assigned to both "${seen.get(key)}" and "${label}"`);
         return;
       }
-      seen.set(s.key, s.label);
+      seen.set(key, label);
     }
+    const presets = local.presets.map((preset, index) => ({ ...preset, order: index }));
     setConflictError("");
-    onSave(local);
+    onSave({ ...local, presets, shortcuts: { ...local.shortcuts } });
   };
 
   const addPreset = () => {
@@ -85,236 +99,68 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
     setLocal({ ...local, presets: updated });
   };
 
-  const handleCheckUpdate = async () => {
-    setUpdateStatus({ checking: true, result: null });
-    try {
-      const info = await invoke<{
-        current_version: string;
-        latest_version: string;
-        update_available: boolean;
-        download_url: string | null;
-        release_notes: string | null;
-      }>("check_for_update");
-      setUpdateStatus({ checking: false, result: info });
-    } catch (e) {
-      setUpdateStatus({ checking: false, result: { error: String(e) } });
-    }
+  const shortcutRows: Array<[string, string]> = [
+    ["shortcut_region", "Region Capture"],
+    ["shortcut_fullscreen", "Full Screen → Clipboard"],
+    ["shortcut_copy", "Copy"],
+    ["shortcut_save", "Save"],
+    ["shortcut_cancel", "Cancel"],
+  ];
+  const toolRows: Array<[string, string]> = [
+    ["pen", "Pen"], ["line", "Line"], ["arrow", "Arrow"], ["rect", "Rectangle"],
+    ["ellipse", "Ellipse"], ["highlight", "Highlight"], ["blur", "Blur"], ["text", "Text"],
+  ];
+  const renderShortcutInput = (key: string, label: string) => {
+    const isGlobal = key.startsWith("shortcut_");
+    const value = isGlobal ? String(local[key as keyof AppSettings] ?? "") : local.shortcuts?.[key] ?? "";
+    return (
+      <div className="setting-row" key={key}>
+        <label>{label}</label>
+        <input type="text" value={value}
+          readOnly={key === "shortcut_region" || key === "shortcut_fullscreen" || key === "shortcut_cancel"}
+          onChange={(e) => isGlobal ? updateField(key as keyof AppSettings, e.target.value as never) : updateShortcuts({ [key]: e.target.value })}
+          className="shortcut-input" placeholder="Not assigned" />
+      </div>
+    );
   };
 
   return (
     <div className="settings-overlay">
       <div className="settings-panel">
-        <h2>Settings</h2>
-
-        {/* Shortcuts Section */}
-        <div className="settings-section">
-          <h3>Keyboard Shortcuts</h3>
-
-          <div className="setting-row">
-            <label>Region Capture</label>
-            <input type="text" value={local.shortcut_region} readOnly className="shortcut-input" />
-          </div>
-
-          <div className="setting-row">
-            <label>Full Screen → Clipboard</label>
-            <input type="text" value={local.shortcut_fullscreen} readOnly className="shortcut-input" />
-          </div>
-
-          <div className="setting-row">
-            <label>Copy</label>
-            <input
-              type="text"
-              value={local.shortcut_copy}
-              onChange={(e) => setLocal({ ...local, shortcut_copy: e.target.value })}
-              className="shortcut-input"
-            />
-          </div>
-
-          <div className="setting-row">
-            <label>Save</label>
-            <input
-              type="text"
-              value={local.shortcut_save}
-              onChange={(e) => setLocal({ ...local, shortcut_save: e.target.value })}
-              className="shortcut-input"
-            />
-          </div>
-
-          <div className="setting-row">
-            <label>Cancel</label>
-            <input type="text" value={local.shortcut_cancel} readOnly className="shortcut-input" />
-          </div>
-
-          <div className="setting-row">
-            <label>Delete annotation</label>
-            <input
-              type="text"
-              value={local.shortcuts?.delete ?? "Delete"}
-              onChange={(e) => setLocal({ ...local, shortcuts: { ...local.shortcuts, delete: e.target.value } })}
-              className="shortcut-input"
-            />
-          </div>
-
-          <div className="setting-row">
-            <label>Increase / decrease size</label>
-            <input
-              type="text"
-              value={local.shortcuts?.size ?? "Mouse wheel"}
-              onChange={(e) => setLocal({ ...local, shortcuts: { ...local.shortcuts, size: e.target.value } })}
-              className="shortcut-input"
-            />
-          </div>
-
-          <div className="setting-row">
-            <label>Enable Global Shortcuts</label>
-            <button
-              className={`toggle-btn ${local.shortcuts_enabled ? "on" : "off"}`}
-              onClick={() => setLocal({ ...local, shortcuts_enabled: !local.shortcuts_enabled })}
-            >
-              {local.shortcuts_enabled ? "ON" : "OFF"}
-            </button>
-          </div>
-
-          <div className="setting-row shortcut-tools-heading"><label>Annotation tools</label><span>Set a key or leave blank</span></div>
-          {[
-            ["pen", "Pen"], ["line", "Line"], ["arrow", "Arrow"], ["rect", "Rectangle"],
-            ["ellipse", "Ellipse"], ["highlight", "Highlight"], ["blur", "Blur"], ["text", "Text"],
-          ].map(([id, label]) => (
-            <div className="setting-row" key={id}>
-              <label>{label}</label>
-              <input type="text" value={local.shortcuts?.[id] ?? ""}
-                onChange={(e) => setLocal({ ...local, shortcuts: { ...local.shortcuts, [id]: e.target.value } })}
-                className="shortcut-input" placeholder="Not assigned" />
-            </div>
+        <div className="settings-header">
+          <div><h2>Settings</h2><p>Configure Cap2Clip</p></div>
+          <button className="settings-close" onClick={onClose} aria-label="Close settings">×</button>
+        </div>
+        <nav className="settings-tabs" aria-label="Settings sections">
+          {([['general', 'General'], ['shortcuts', 'Shortcuts'], ['presets', 'Presets']] as const).map(([id, label]) => (
+            <button key={id} className={activeTab === id ? "active" : ""} onClick={() => setActiveTab(id)}>{label}</button>
           ))}
-
-          {conflictError && <div className="conflict-error">{conflictError}</div>}
+        </nav>
+        <div className="settings-content">
+          {activeTab === "general" && <div className="settings-section">
+            <h3>Application</h3>
+            <div className="setting-row"><div><label>Start with Windows</label><small>Launch Cap2Clip when you sign in</small></div><button className={`toggle-btn ${local.auto_start ? "on" : "off"}`} onClick={() => updateField("auto_start", !local.auto_start)}>{local.auto_start ? "ON" : "OFF"}</button></div>
+            <div className="setting-row"><div><label>Global shortcuts</label><small>Allow capture shortcuts outside the app</small></div><button className={`toggle-btn ${local.shortcuts_enabled ? "on" : "off"}`} onClick={() => updateField("shortcuts_enabled", !local.shortcuts_enabled)}>{local.shortcuts_enabled ? "ON" : "OFF"}</button></div>
+          </div>}
+          {activeTab === "shortcuts" && <div className="settings-section">
+            <h3>Global shortcuts</h3>{shortcutRows.map(([key, label]) => renderShortcutInput(key, label))}
+            <h3 className="settings-subheading">Annotation tools</h3><p className="settings-help">Press a key to switch tools. Leave empty to disable.</p>
+            {toolRows.map(([key, label]) => renderShortcutInput(key, label))}
+            <div className="setting-row"><div><label>Delete annotation</label><small>Delete or Backspace</small></div><span className="shortcut-badge">Delete</span></div>
+            <div className="setting-row"><div><label>Brush size</label><small>Mouse wheel or bracket keys</small></div><span className="shortcut-badge">Wheel / [ ]</span></div>
+            {conflictError && <div className="conflict-error">{conflictError}</div>}
+          </div>}
+          {activeTab === "presets" && <div className="settings-section">
+            <h3>Capture presets</h3><p className="settings-help">Enable, reorder, or remove capture sizes.</p>
+            <div className="preset-list-settings">{local.presets.slice().sort((a, b) => a.order - b.order).map((preset, idx) => (
+              <div key={preset.id} className={`preset-row ${!preset.enabled ? "disabled" : ""}`}>
+                <span className="preset-name">{preset.name}</span><span className="preset-dims">{preset.type === "aspect_ratio" ? `Ratio ${preset.width}:${preset.height}` : `${preset.width}×${preset.height}`}</span>
+                <div className="preset-actions"><button onClick={() => movePreset(idx, -1)} title="Move up" disabled={idx === 0}>↑</button><button onClick={() => movePreset(idx, 1)} title="Move down" disabled={idx === local.presets.length - 1}>↓</button><button onClick={() => togglePreset(preset.id)} title={preset.enabled ? "Disable" : "Enable"}>{preset.enabled ? "✓" : "○"}</button>{!preset.is_builtin && <button onClick={() => deletePreset(preset.id)} title="Delete">×</button>}</div>
+              </div>))}</div>
+            <h4>Add custom preset</h4><div className="preset-form"><input placeholder="Name" value={newPresetName} onChange={(e) => setNewPresetName(e.target.value)} /><select value={newPresetType} onChange={(e) => setNewPresetType(e.target.value as "fixed_size" | "aspect_ratio")}><option value="fixed_size">Fixed size</option><option value="aspect_ratio">Aspect ratio</option></select><input type="number" min="1" placeholder="Width" value={newPresetW} onChange={(e) => setNewPresetW(e.target.value)} /><input type="number" min="1" placeholder="Height" value={newPresetH} onChange={(e) => setNewPresetH(e.target.value)} /><button className="settings-secondary-btn" onClick={addPreset}>Add preset</button></div>
+          </div>}
         </div>
-
-        {/* Presets Section */}
-        <div className="settings-section">
-          <h3>Capture Presets</h3>
-
-          <div className="preset-list-settings">
-            {local.presets
-              .sort((a, b) => a.order - b.order)
-              .map((preset, idx) => (
-                <div key={preset.id} className={`preset-row ${!preset.enabled ? "disabled" : ""}`}>
-                  <span className="preset-name">{preset.name}</span>
-                  <span className="preset-dims">
-                    {preset.type === "aspect_ratio" ? `Ratio ${preset.width}:${preset.height}` : `${preset.width}×${preset.height}`}
-                  </span>
-                  <div className="preset-actions">
-                    <button onClick={() => movePreset(idx, -1)} title="Move up" disabled={idx === 0}>↑</button>
-                    <button onClick={() => movePreset(idx, 1)} title="Move down" disabled={idx === local.presets.length - 1}>↓</button>
-                    <button onClick={() => togglePreset(preset.id)} title={preset.enabled ? "Disable" : "Enable"}>
-                      {preset.enabled ? "👁" : "🚫"}
-                    </button>
-                    {!preset.is_builtin && (
-                      <button onClick={() => deletePreset(preset.id)} title="Delete" className="danger">✕</button>
-                    )}
-                  </div>
-                </div>
-              ))}
-          </div>
-
-          {/* Add new preset */}
-          <div className="add-preset-form">
-            <h4>Add Custom Preset</h4>
-            <div className="preset-form-row">
-              <input
-                type="text"
-                placeholder="Name"
-                value={newPresetName}
-                onChange={(e) => setNewPresetName(e.target.value)}
-                className="preset-input"
-              />
-              <select
-                value={newPresetType}
-                onChange={(e) => setNewPresetType(e.target.value as "fixed_size" | "aspect_ratio")}
-                className="preset-select"
-              >
-                <option value="fixed_size">Fixed Size</option>
-                <option value="aspect_ratio">Aspect Ratio</option>
-              </select>
-            </div>
-            <div className="preset-form-row">
-              <input
-                type="number"
-                placeholder="Width"
-                value={newPresetW}
-                onChange={(e) => setNewPresetW(e.target.value)}
-                className="preset-input"
-                min="1"
-              />
-              <span className="preset-x">×</span>
-              <input
-                type="number"
-                placeholder="Height"
-                value={newPresetH}
-                onChange={(e) => setNewPresetH(e.target.value)}
-                className="preset-input"
-                min="1"
-              />
-              <button
-                onClick={addPreset}
-                disabled={!newPresetName || !newPresetW || !newPresetH}
-                className="add-preset-btn"
-              >
-                + Add
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Save Location */}
-        <div className="settings-section">
-          <h3>Save Location</h3>
-          <div className="setting-row">
-            <label>Last Save Directory</label>
-            <span className="save-path">{local.last_save_dir || "Not set"}</span>
-          </div>
-        </div>
-
-        {/* Startup & Updates */}
-        <div className="settings-section">
-          <h3>System</h3>
-
-          <div className="setting-row">
-            <label>Start with Windows</label>
-            <button
-              className={`toggle-btn ${local.auto_start ? "on" : "off"}`}
-              onClick={() => setLocal({ ...local, auto_start: !local.auto_start })}
-            >
-              {local.auto_start ? "ON" : "OFF"}
-            </button>
-          </div>
-
-          <div className="setting-row">
-            <label>Check for Updates</label>
-            <button
-              className="check-update-btn"
-              onClick={handleCheckUpdate}
-              disabled={updateStatus.checking}
-            >
-              {updateStatus.checking
-                ? "Checking..."
-                : updateStatus.result
-                ? updateStatus.result.update_available
-                  ? `Update available: v${updateStatus.result.latest_version}`
-                  : updateStatus.result.error
-                  ? "Error"
-                  : "You're up to date!"
-                : "Check Now"}
-            </button>
-          </div>
-        </div>
-
-        {/* Actions */}
-        <div className="settings-actions">
-          <button className="btn-primary" onClick={handleSave}>Save</button>
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
-        </div>
+        <div className="settings-actions"><button className="cancel-btn" onClick={onClose}>Cancel</button><button className="save-btn" onClick={handleSave}>Save changes</button></div>
       </div>
     </div>
   );
