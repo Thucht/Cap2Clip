@@ -152,9 +152,8 @@ html, body, #root {
 
 .selection-draft {
   position: absolute;
-  border: 2px solid #34C759;
-  background: rgba(52, 199, 89, 0.08);
-  box-shadow: 0 0 0 1px rgba(52, 199, 89, 0.45);
+  border: 1px dashed rgba(255, 255, 255, 0.8);
+  background: transparent;
   pointer-events: none;
   z-index: 10030;
 }
@@ -165,8 +164,9 @@ html, body, #root {
   left: 0;
   padding: 3px 8px;
   border-radius: 4px;
-  color: white;
-  background: rgba(0, 0, 0, 0.82);
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(28, 28, 30, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
@@ -246,14 +246,21 @@ html, body, #root {
 .handle-s  { bottom: -10px; left: calc(50% - 10px); cursor: ns-resize; }
 .handle-se { bottom: -10px; right: -10px; cursor: se-resize; }
 
-/* Previously selected regions remain visible while the active region is edited. */
+/* Previously selected regions: each region uses a distinct accent. */
 .multi-region-outline {
+  --region-color: #34c759;
   position: absolute;
-  border: 1px solid rgba(52, 199, 89, 0.9);
-  box-shadow: 0 0 0 1px rgba(52, 199, 89, 0.25);
+  border: 1px dashed var(--region-color);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--region-color) 25%, transparent);
+  background: color-mix(in srgb, var(--region-color) 5%, transparent);
   pointer-events: none;
   z-index: 10003;
 }
+
+.multi-region-outline.region-1 { --region-color: #0a84ff; }
+.multi-region-outline.region-2 { --region-color: #ff9f0a; }
+.multi-region-outline.region-3 { --region-color: #bf5af2; }
+.multi-region-outline.region-4 { --region-color: #ff375f; }
 
 .multi-region-outline span {
   position: absolute;
@@ -262,7 +269,7 @@ html, body, #root {
   padding: 2px 5px;
   border-radius: 4px;
   color: white;
-  background: rgba(52, 199, 89, 0.85);
+  background: var(--region-color);
   font-size: 10px;
   font-weight: 700;
 }
@@ -557,18 +564,19 @@ html, body, #root {
 .stroke-slider {
   -webkit-appearance: none;
   appearance: none;
-  width: 20px;
-  height: 64px;
-  writing-mode: vertical-lr;
-  direction: rtl;
+  width: 64px;
+  height: 20px;
+  transform: rotate(-90deg);
   background: transparent;
   cursor: pointer;
   display: block;
   padding: 0;
+  margin: 22px 0;
 }
 
 .stroke-slider::-webkit-slider-runnable-track {
   width: 3px;
+  height: 3px;
   background: linear-gradient(to top, rgba(255,255,255,0.1), rgba(255,255,255,0.3));
   border-radius: 2px;
 }
@@ -577,11 +585,11 @@ html, body, #root {
   -webkit-appearance: none;
   width: 11px;
   height: 11px;
+  margin-top: -4px;
   background: #007AFF;
   border-radius: 50%;
   border: 2px solid white;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
-  margin-left: 0;
   cursor: pointer;
 }
 

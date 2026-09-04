@@ -35,6 +35,7 @@ export function CaptureOverlay({
 }: CaptureOverlayProps) {
   const [rect, setRect] = useState<SelectionGeometry | null>(selectionRect);
   const [isDragging, setIsDragging] = useState(false);
+  const [draftRect, setDraftRect] = useState<SelectionGeometry | null>(null);
   const [startPoint, setStartPoint] = useState({ x: 0, y: 0 });
   const [isResizing, setIsResizing] = useState<string | null>(null);
   const [isMoving, setIsMoving] = useState(false);
@@ -44,6 +45,9 @@ export function CaptureOverlay({
   const [showPresetDropdown, setShowPresetDropdown] = useState(false);
   const [multiRegion, setMultiRegion] = useState(false);
   const [regionRects, setRegionRects] = useState<SelectionGeometry[]>(selectionRect ? [selectionRect] : []);
+  // All multi-capture regions are cropped from this immutable frame.
+  const [captureFrame, setCaptureFrame] = useState<string | null>(fullScreenshot);
+  const [captureRects, setCaptureRects] = useState<SelectionGeometry[]>([]);
   const canvasRef = useRef<any>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
 
@@ -52,15 +56,23 @@ export function CaptureOverlay({
 
   // Initialize rect when entering selecting phase
   useEffect(() => {
+    if (fullScreenshot && fullScreenshot !== captureFrame && phase === "selecting") {
+      setCaptureFrame(fullScreenshot);
+    }
+  }, [fullScreenshot, captureFrame, phase]);
+
+  useEffect(() => {
     if (phase === "selecting") {
       if (selectionRect) {
         setRect(selectionRect);
         setRegionRects([selectionRect]);
       } else {
+        setCaptureFrame(fullScreenshot);
         setRect(null);
         setRegionRects([]);
       }
       setIsDragging(false);
+      setDraftRect(null);
       setIsResizing(null);
       setIsMoving(false);
       setShowPresetDropdown(false);
@@ -122,7 +134,7 @@ export function CaptureOverlay({
     e.preventDefault();
     setIsDragging(true);
     setStartPoint({ x: e.clientX, y: e.clientY });
-    setRect({ x: e.clientX, y: e.clientY, width: 0, height: 0 });
+    setDraftRect({ x: e.clientX, y: e.clientY, width: 0, height: 0 });
   }, [phase, rect]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
@@ -167,27 +179,29 @@ export function CaptureOverlay({
       const y = Math.min(startPoint.y, e.clientY);
       const w = Math.abs(e.clientX - startPoint.x);
       const h = Math.abs(e.clientY - startPoint.y);
-      setRect(clamp(x, y, w, h));
+      setDraftRect(clamp(x, y, w, h));
     }
   }, [rect, isResizing, isMoving, isDragging, startPoint, resizeStart, moveStart, clamp, constrainRatio, setActiveRect]);
 
   const handleMouseUp = useCallback(() => {
-    if (isDragging && rect && rect.width > 5 && rect.height > 5) {
+    if (isDragging && draftRect && draftRect.width > 5 && draftRect.height > 5) {
       if (phase === "annotating" && multiRegion) {
-        setRegionRects((current) => [...current, rect]);
+        setRegionRects((current) => [...current, draftRect]);
+        setCaptureRects((current) => [...current, draftRect]);
       } else {
-        setRegionRects([rect]);
+        setRegionRects([draftRect]);
+        setCaptureRects([draftRect]);
       }
-      onEnterAnnotate(rect);
-    } else if ((isResizing || isMoving) && rect && rect.width >= 10 && rect.height >= 10) {
-      onEnterAnnotate(rect);
-    } else if (isDragging && phase === "annotating") {
-      setRect(regionRects[regionRects.length - 1] || null);
+      setRect(draftRect);
+      onEnterAnnotate(draftRect);
+    } else if (isResizing || isMoving) {
+      onEnterAnnotate(rect!);
     }
+    setDraftRect(null);
     setIsDragging(false);
     setIsResizing(null);
     setIsMoving(false);
-  }, [isDragging, isResizing, isMoving, rect, phase, multiRegion, regionRects, onEnterAnnotate]);
+  }, [isDragging, draftRect, isResizing, isMoving, rect, phase, multiRegion, onEnterAnnotate]);
 
   // Resize handle mouse down - works in BOTH phases
   const handleResizeStart = useCallback((handle: string, e: React.MouseEvent) => {
@@ -264,9 +278,9 @@ export function CaptureOverlay({
         resolve(crop.toDataURL("image/png"));
       };
       image.onerror = () => reject(new Error("Could not load screenshot"));
-      image.src = fullScreenshot;
+      image.src = captureFrame || fullScreenshot;
     });
-  }, [fullScreenshot]);
+  }, [captureFrame, fullScreenshot]);
 
   const getExportImages = useCallback(async (): Promise<string[]> => {
     if (!multiRegion || regionRects.length <= 1) {
@@ -358,13 +372,13 @@ export function CaptureOverlay({
   );
 
   const renderSelectionDraft = () => {
-    if (!isDragging || !rect || rect.width < 1 || rect.height < 1) return null;
+    if (!isDragging || !draftRect || draftRect.width < 1 || draftRect.height < 1) return null;
     return (
       <div
         className="selection-draft"
-        style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
+        style={{ left: draftRect.x, top: draftRect.y, width: draftRect.width, height: draftRect.height }}
       >
-        <span>{Math.round(rect.width)} × {Math.round(rect.height)}</span>
+        <span>{Math.round(draftRect.width)} × {Math.round(draftRect.height)}</span>
       </div>
     );
   };
@@ -456,14 +470,14 @@ export function CaptureOverlay({
       )}
 
       {/* ======== ANNOTATING PHASE ======== */}
-      {phase === "annotating" && fullScreenshot && rect && !isDragging && (
+      {phase === "annotating" && fullScreenshot && rect && (
         <>
           {renderBackdrops()}
 
-          {multiRegion && regionRects.slice(0, -1).map((region, index) => (
+          {multiRegion && captureRects.slice(0, -1).map((region, index) => (
             <div
               key={`region-${index}`}
-              className="multi-region-outline"
+              className={`multi-region-outline region-${index % 5}`}
               style={{ left: region.x, top: region.y, width: region.width, height: region.height }}
             >
               <span>{index + 1}</span>
@@ -477,7 +491,7 @@ export function CaptureOverlay({
           >
             <AnnotationCanvas
               ref={canvasRef}
-              fullScreenshot={fullScreenshot}
+              fullScreenshot={captureFrame || fullScreenshot}
               rect={rect}
             />
           </div>
