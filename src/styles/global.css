@@ -227,10 +227,12 @@ html, body, #root {
   position: absolute;
   left: 5px;
   top: 5px;
-  width: 10px;
-  height: 10px;
+  width: 7.5px;
+  height: 7.5px;
+  left: 6.25px;
+  top: 6.25px;
   background: #007AFF;
-  border: 1.5px solid white;
+  border: 1px solid white;
   border-radius: 50%;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }

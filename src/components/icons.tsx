@@ -102,13 +102,9 @@ export const IconHighlight = (): JSX.Element => (
 
 export const IconBlur = (): JSX.Element => (
   <svg {...iconProps}>
-    <circle cx="12" cy="12" r="3" />
-    <circle cx="4" cy="6" r="1" />
-    <circle cx="20" cy="6" r="1" />
-    <circle cx="6" cy="18" r="1" />
-    <circle cx="18" cy="18" r="1" />
-    <circle cx="12" cy="4" r="1" />
-    <circle cx="12" cy="20" r="1" />
+    <path d="M12 3a9 9 0 1 1-6.36 2.64" />
+    <path d="M12 3v4M12 17v4M3 12h4M17 12h4" />
+    <path d="M5.64 5.64l2.83 2.83M15.53 15.53l2.83 2.83M18.36 5.64l-2.83 2.83M8.47 15.53l-2.83 2.83" />
   </svg>
 );
 
@@ -132,12 +128,12 @@ export const IconMove = (): JSX.Element => (
   </svg>
 );
 
-// Resize icon
+// Hand cursor for editing existing annotations
 export const IconResize = (): JSX.Element => (
   <svg {...iconProps}>
-    <polyline points="15 3 21 3 21 9" />
-    <polyline points="9 21 3 21 3 15" />
-    <line x1="21" y1="3" x2="14" y2="10" />
-    <line x1="3" y1="21" x2="10" y2="14" />
+    <path d="M7 11V5a1.5 1.5 0 0 1 3 0v5" />
+    <path d="M10 10V3.5a1.5 1.5 0 0 1 3 0V10" />
+    <path d="M13 10V5a1.5 1.5 0 0 1 3 0v6" />
+    <path d="M16 11V8.5a1.5 1.5 0 0 1 3 0v5.2c0 4.6-2.8 7.3-6.8 7.3h-1.1c-2.1 0-3.2-.8-4.4-2.4L3.2 14a1.5 1.5 0 0 1 2.4-1.8L7 14V11" />
   </svg>
 );

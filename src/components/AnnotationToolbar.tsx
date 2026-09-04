@@ -276,9 +276,9 @@ export function AnnotationToolbar({
           canvas.add(head);
         }
 
-        shape.set({ selectable: true, evented: true });
+        shape.set({ selectable: false, evented: false });
         shape.setCoords();
-        canvas.setActiveObject(shape);
+        canvas.discardActiveObject();
         canvas.renderAll();
       };
 
@@ -306,6 +306,9 @@ export function AnnotationToolbar({
         canvas.setActiveObject(text);
         text.enterEditing();
         text.selectAll();
+        // Keep the text editable for this gesture, but hide its transform frame
+        // once editing is complete; Edit is the only selection tool.
+        text.set({ selectable: false, evented: false });
         canvas.renderAll();
       };
       const noop = () => undefined;
