@@ -66,17 +66,26 @@ export function AnnotationToolbar({
   const vToolbarRef = useRef<HTMLDivElement>(null);
   const [hSize, setHSize] = useState({ width: 360, height: 38 });
   const [vSize, setVSize] = useState({ width: 38, height: 280 });
+  // getBoundingClientRect already returns the post-scale visual dimensions.
+  // Do not scale these values a second time when placing the toolbars.
 
   useLayoutEffect(() => {
-    if (hToolbarRef.current) {
-      const r = hToolbarRef.current.getBoundingClientRect();
-      setHSize({ width: r.width, height: r.height });
-    }
-    if (vToolbarRef.current) {
-      const r = vToolbarRef.current.getBoundingClientRect();
-      setVSize({ width: r.width, height: r.height });
-    }
-  }, [activeTool, color, strokeWidth, showColorPicker, showPresetDropdown, presets, visible]);
+    const measure = () => {
+      if (hToolbarRef.current) {
+        const r = hToolbarRef.current.getBoundingClientRect();
+        setHSize({ width: r.width, height: r.height });
+      }
+      if (vToolbarRef.current) {
+        const r = vToolbarRef.current.getBoundingClientRect();
+        setVSize({ width: r.width, height: r.height });
+      }
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    if (hToolbarRef.current) observer.observe(hToolbarRef.current);
+    if (vToolbarRef.current) observer.observe(vToolbarRef.current);
+    return () => observer.disconnect();
+  }, [activeTool, color, strokeWidth, blurBrush, showColorPicker, showPresetDropdown, showBlurPicker, presets, visible]);
 
   const screenW = window.innerWidth;
   const screenH = window.innerHeight;
@@ -110,6 +119,21 @@ export function AnnotationToolbar({
     8,
     Math.min(screenH - vSize.height - 8, rect.y + rect.height / 2 - vSize.height / 2)
   );
+
+  // On very small selections, keep the vertical toolbar out of the horizontal
+  // toolbar's rectangle. If both cannot fit around the selection, anchor the
+  // vertical toolbar to the horizontal toolbar's lower corner.
+  const verticalOverlapsHorizontal =
+    verticalLeft < horizontalLeft + hSize.width &&
+    verticalLeft + vSize.width > horizontalLeft &&
+    verticalTop < horizontalTop + hSize.height &&
+    verticalTop + vSize.height > horizontalTop;
+  const safeVerticalTop = verticalOverlapsHorizontal
+    ? Math.max(8, Math.min(screenH - vSize.height - 8, horizontalTop + hSize.height))
+    : verticalTop;
+  const safeVerticalLeft = verticalOverlapsHorizontal
+    ? Math.max(8, Math.min(screenW - vSize.width - 8, horizontalLeft + hSize.width - vSize.width))
+    : verticalLeft;
 
   const getCanvas = (): Canvas | null => {
     if (canvasRef.current?.getCanvas) return canvasRef.current.getCanvas();
@@ -147,6 +171,33 @@ export function AnnotationToolbar({
     localStorage.setItem("cap2clip.blurBrush", next);
     setShowBlurPicker(false);
   }, []);
+
+  useEffect(() => {
+    if (activeTool !== "blur") {
+      setShowBlurPicker(false);
+      return;
+    }
+    const canvas = getCanvas();
+    if (canvas?.freeDrawingBrush) {
+      canvas.freeDrawingBrush.width = strokeWidthRef.current * (blurBrush === "soft" ? 3 : 2);
+      canvas.freeDrawingBrush.color = blurBrush === "solid" ? "rgba(32,32,36,0.94)" : "rgba(120,120,120,0.45)";
+    }
+  }, [activeTool, blurBrush]);
+
+  // Blur is intentionally a brush: every drag creates one independent redaction stroke.
+  // The selected mode is persisted and updates the active Fabric brush immediately.
+
+  useEffect(() => {
+    if (!showBlurPicker) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest(".blur-picker-popup") && !target.closest(".blur-tool-button")) {
+        setShowBlurPicker(false);
+      }
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, [showBlurPicker]);
 
   const setTool = useCallback((tool: Tool) => {
     const canvas = getCanvas();
@@ -357,7 +408,7 @@ export function AnnotationToolbar({
     if (!canvas) return;
 
     if (canvas.freeDrawingBrush) {
-      canvas.freeDrawingBrush.width = activeTool === "highlight" ? width * 4 : width;
+      canvas.freeDrawingBrush.width = activeTool === "highlight" ? width * 4 : activeTool === "blur" ? width * (blurBrushRef.current === "soft" ? 3 : 2) : width;
     }
     const activeObject = canvas.getActiveObject() as any;
     if (activeObject?.type === "i-text" || activeObject?.type === "text") {
@@ -501,7 +552,7 @@ export function AnnotationToolbar({
       <div
         ref={vToolbarRef}
         className="annotation-toolbar annotation-toolbar-vertical"
-        style={{ left: verticalLeft, top: verticalTop, ...displayStyle }}
+        style={{ left: safeVerticalLeft, top: safeVerticalTop, ...displayStyle }}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="toolbar-section vertical">
@@ -510,7 +561,7 @@ export function AnnotationToolbar({
             return (
               <button
                 key={tool.id}
-                className={`tool-btn ${activeTool === tool.id ? "active" : ""}`}
+                className={`tool-btn ${tool.id === "blur" ? "blur-tool-button" : ""} ${activeTool === tool.id ? "active" : ""}`}
                 onClick={() => {
                   setTool(tool.id);
                   if (tool.id === "blur") setShowBlurPicker((open) => !open);
