@@ -53,14 +53,14 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
   };
 
   const addPreset = () => {
-    if (!newPresetName || !newPresetW || !newPresetH) return;
-    const w = parseInt(newPresetW);
-    const h = parseInt(newPresetH);
-    if (isNaN(w) || isNaN(h) || w < 1 || h < 1) return;
+    const name = newPresetName.trim();
+    const w = Number(newPresetW);
+    const h = Number(newPresetH);
+    if (!name || !Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1) return;
 
     const newPreset: Preset = {
       id: `custom_${Date.now()}`,
-      name: newPresetName,
+      name,
       type: newPresetType,
       width: w,
       height: h,
@@ -89,14 +89,13 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
     });
   };
 
-  const movePreset = (index: number, direction: -1 | 1) => {
-    const arr = [...local.presets];
+  const movePreset = (id: string, direction: -1 | 1) => {
+    const arr = local.presets.slice().sort((a, b) => a.order - b.order);
+    const index = arr.findIndex((preset) => preset.id === id);
     const target = index + direction;
-    if (target < 0 || target >= arr.length) return;
+    if (index < 0 || target < 0 || target >= arr.length) return;
     [arr[index], arr[target]] = [arr[target], arr[index]];
-    // Update order values
-    const updated = arr.map((p, i) => ({ ...p, order: i }));
-    setLocal({ ...local, presets: updated });
+    setLocal((current) => ({ ...current, presets: arr.map((preset, order) => ({ ...preset, order })) }));
   };
 
   const shortcutRows: Array<[string, string]> = [
@@ -152,10 +151,10 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
           </div>}
           {activeTab === "presets" && <div className="settings-section">
             <h3>Capture presets</h3><p className="settings-help">Enable, reorder, or remove capture sizes.</p>
-            <div className="preset-list-settings">{local.presets.slice().sort((a, b) => a.order - b.order).map((preset, idx) => (
+            <div className="preset-list-settings">{local.presets.slice().sort((a, b) => a.order - b.order).map((preset) => (
               <div key={preset.id} className={`preset-row ${!preset.enabled ? "disabled" : ""}`}>
                 <span className="preset-name">{preset.name}</span><span className="preset-dims">{preset.type === "aspect_ratio" ? `Ratio ${preset.width}:${preset.height}` : `${preset.width}×${preset.height}`}</span>
-                <div className="preset-actions"><button onClick={() => movePreset(idx, -1)} title="Move up" disabled={idx === 0}>↑</button><button onClick={() => movePreset(idx, 1)} title="Move down" disabled={idx === local.presets.length - 1}>↓</button><button onClick={() => togglePreset(preset.id)} title={preset.enabled ? "Disable" : "Enable"}>{preset.enabled ? "✓" : "○"}</button>{!preset.is_builtin && <button onClick={() => deletePreset(preset.id)} title="Delete">×</button>}</div>
+                <div className="preset-actions"><button onClick={() => movePreset(preset.id, -1)} title="Move up" disabled={preset.order === 0}>↑</button><button onClick={() => movePreset(preset.id, 1)} title="Move down" disabled={preset.order === local.presets.length - 1}>↓</button><button onClick={() => togglePreset(preset.id)} title={preset.enabled ? "Disable" : "Enable"}>{preset.enabled ? "✓" : "○"}</button>{!preset.is_builtin && <button onClick={() => deletePreset(preset.id)} title="Delete">×</button>}</div>
               </div>))}</div>
             <h4>Add custom preset</h4><div className="preset-form"><input placeholder="Name" value={newPresetName} onChange={(e) => setNewPresetName(e.target.value)} /><select value={newPresetType} onChange={(e) => setNewPresetType(e.target.value as "fixed_size" | "aspect_ratio")}><option value="fixed_size">Fixed size</option><option value="aspect_ratio">Aspect ratio</option></select><input type="number" min="1" placeholder="Width" value={newPresetW} onChange={(e) => setNewPresetW(e.target.value)} /><input type="number" min="1" placeholder="Height" value={newPresetH} onChange={(e) => setNewPresetH(e.target.value)} /><button className="settings-secondary-btn" onClick={addPreset}>Add preset</button></div>
           </div>}
