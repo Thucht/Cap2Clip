@@ -24,6 +24,7 @@ interface AnnotationToolbarProps {
   presets?: Preset[];
   activePreset?: Preset | null;
   onPresetSelect?: (preset: Preset) => void;
+  toolShortcuts?: { [key: string]: string };
 }
 
 const COLORS = [
@@ -46,6 +47,7 @@ export function AnnotationToolbar({
   presets = [],
   activePreset,
   onPresetSelect,
+  toolShortcuts = {},
 }: AnnotationToolbarProps) {
   const [color, setColor] = useState(() => localStorage.getItem("cap2clip.color") || "#ff3b30");
   const [strokeWidth, setStrokeWidth] = useState(() => Number(localStorage.getItem("cap2clip.strokeWidth")) || 3);
@@ -271,7 +273,7 @@ export function AnnotationToolbar({
           selectable: false,
           evented: false,
           fill: "transparent",
-          stroke: "transparent",
+          stroke: "rgba(255,255,255,0.01)",
           opacity: 1,
           data: { kind: "blur", brush: blurBrushRef.current, bounds },
         });
@@ -471,15 +473,23 @@ export function AnnotationToolbar({
   // Bracket shortcuts must work even when the toolbar is not focused.
   useEffect(() => {
     const listener = (e: KeyboardEvent) => {
-      if (e.code !== "BracketLeft" && e.code !== "BracketRight") return;
       const canvas = getCanvas();
       if ((canvas?.getActiveObject() as any)?.isEditing) return;
-      e.preventDefault();
-      changeSize(strokeWidthRef.current + (e.code === "BracketLeft" ? -1 : 1));
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (canvas?.getActiveObject()) { e.preventDefault(); handleDelete(); }
+        return;
+      }
+      if (e.code === "BracketLeft" || e.code === "BracketRight") {
+        e.preventDefault();
+        changeSize(strokeWidthRef.current + (e.code === "BracketLeft" ? -1 : 1));
+        return;
+      }
+      const shortcut = Object.entries(toolShortcuts).find(([, value]) => value && value.toLowerCase() === e.key.toLowerCase())?.[0] as Tool | undefined;
+      if (shortcut) { e.preventDefault(); setTool(shortcut); }
     };
     window.addEventListener("keydown", listener);
     return () => window.removeEventListener("keydown", listener);
-  }, [changeSize]);
+  }, [changeSize, handleDelete, toolShortcuts]);
 
   // Close color picker on outside click
   useEffect(() => {

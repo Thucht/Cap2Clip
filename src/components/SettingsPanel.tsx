@@ -175,6 +175,19 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             </button>
           </div>
 
+          <div className="setting-row shortcut-tools-heading"><label>Annotation tools</label><span>Set a key or leave blank</span></div>
+          {[
+            ["pen", "Pen"], ["line", "Line"], ["arrow", "Arrow"], ["rect", "Rectangle"],
+            ["ellipse", "Ellipse"], ["highlight", "Highlight"], ["blur", "Blur"], ["text", "Text"],
+          ].map(([id, label]) => (
+            <div className="setting-row" key={id}>
+              <label>{label}</label>
+              <input type="text" value={local.shortcuts?.[id] ?? ""}
+                onChange={(e) => setLocal({ ...local, shortcuts: { ...local.shortcuts, [id]: e.target.value } })}
+                className="shortcut-input" placeholder="Not assigned" />
+            </div>
+          ))}
+
           {conflictError && <div className="conflict-error">{conflictError}</div>}
         </div>
 

@@ -242,6 +242,7 @@ function App() {
           onCancel={handleCancel}
           shortcutCopy={settings.shortcut_copy}
           shortcutSave={settings.shortcut_save}
+          toolShortcuts={settings.shortcuts}
         />
       )}
 

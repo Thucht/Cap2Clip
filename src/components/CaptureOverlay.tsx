@@ -18,6 +18,7 @@ interface CaptureOverlayProps {
   onCancel: () => void;
   shortcutCopy: string;
   shortcutSave: string;
+  toolShortcuts?: { [key: string]: string };
 }
 
 export function CaptureOverlay({
@@ -32,6 +33,7 @@ export function CaptureOverlay({
   onSaveDialog,
   onQuickSave,
   onCancel,
+  toolShortcuts,
 }: CaptureOverlayProps) {
   const [rect, setRect] = useState<SelectionGeometry | null>(selectionRect);
   const [isDragging, setIsDragging] = useState(false);
@@ -526,6 +528,7 @@ export function CaptureOverlay({
             presets={presets}
             activePreset={activePreset}
             onPresetSelect={handlePresetSelect}
+            toolShortcuts={toolShortcuts}
           />
         </>
       )}
