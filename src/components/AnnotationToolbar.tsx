@@ -8,7 +8,7 @@ import {
   IconMove, IconResize,
 } from "./icons";
 
-export type Tool = "move" | "select" | "pen" | "line" | "arrow" | "rect" | "ellipse" | "highlight" | "blur" | "text";
+export type Tool = "move" | "edit" | "select" | "pen" | "line" | "arrow" | "rect" | "ellipse" | "highlight" | "blur" | "text";
 
 interface AnnotationToolbarProps {
   onCopy: () => void;
@@ -48,8 +48,8 @@ export function AnnotationToolbar({
   activePreset,
   onPresetSelect,
 }: AnnotationToolbarProps) {
-  const [color, setColor] = useState("#ff3b30");
-  const [strokeWidth, setStrokeWidth] = useState(3);
+  const [color, setColor] = useState(() => localStorage.getItem("cap2clip.color") || "#ff3b30");
+  const [strokeWidth, setStrokeWidth] = useState(() => Number(localStorage.getItem("cap2clip.strokeWidth")) || 3);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showPresetDropdown, setShowPresetDropdown] = useState(false);
   const undoStack = useRef<string[]>([]);
@@ -148,15 +148,37 @@ export function AnnotationToolbar({
 
     onToolChange(tool);
     canvas.isDrawingMode = false;
-    canvas.selection = tool === "select" || tool === "move";
-    canvas.defaultCursor = tool === "move"
-      ? "move"
-      : tool === "select"
-        ? "default"
-        : tool === "text"
-          ? "text"
-          : "crosshair";
-    canvas.hoverCursor = tool === "move" ? "move" : "default";
+    canvas.selection = tool === "edit";
+    canvas.defaultCursor = tool === "move" ? "move" : tool === "edit" ? "default" : tool === "select" ? "crosshair" : tool === "text" ? "text" : "crosshair";
+    canvas.hoverCursor = tool === "edit" ? "move" : tool === "move" ? "move" : "default";
+
+    if (tool === "edit") {
+      canvas.forEachObject((object: any) => {
+        object.set({ selectable: true, evented: true });
+      });
+      canvas.discardActiveObject();
+      canvas.renderAll();
+      return;
+    }
+
+    if (tool === "move") {
+      canvas.discardActiveObject();
+      canvas.forEachObject((object: any) => {
+        object.set({ selectable: false, evented: false });
+      });
+      canvas.renderAll();
+      return;
+    }
+
+    canvas.forEachObject((object: any) => {
+      object.set({ selectable: false, evented: false });
+    });
+    canvas.discardActiveObject();
+    canvas.renderAll();
+
+    if (tool === "select") {
+      return;
+    }
 
     if (tool === "pen" || tool === "highlight") {
       canvas.isDrawingMode = true;
@@ -308,6 +330,7 @@ export function AnnotationToolbar({
     const width = Math.max(1, Math.min(20, Math.round(nextSize)));
     strokeWidthRef.current = width;
     setStrokeWidth(width);
+    localStorage.setItem("cap2clip.strokeWidth", String(width));
     const canvas = getCanvas();
     if (!canvas) return;
 
@@ -325,6 +348,7 @@ export function AnnotationToolbar({
   const applyColor = useCallback((nextColor: string) => {
     colorRef.current = nextColor;
     setColor(nextColor);
+    localStorage.setItem("cap2clip.color", nextColor);
     const canvas = getCanvas();
     if (canvas?.freeDrawingBrush) {
       canvas.freeDrawingBrush.color = activeTool === "highlight" ? `${nextColor}66` : nextColor;
@@ -369,7 +393,8 @@ export function AnnotationToolbar({
 
   // Tools list — move on top as requested
   const tools: { id: Tool; icon: () => JSX.Element; label: string }[] = [
-    { id: "move", icon: IconMove, label: "Move / Drag" },
+    { id: "move", icon: IconMove, label: "Drag selection" },
+    { id: "edit", icon: IconResize, label: "Edit annotations" },
     { id: "pen", icon: IconPen, label: "Pen" },
     { id: "line", icon: IconLine, label: "Line" },
     { id: "arrow", icon: IconArrow, label: "Arrow" },

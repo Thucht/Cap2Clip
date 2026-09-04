@@ -357,6 +357,18 @@ export function CaptureOverlay({
     </>
   );
 
+  const renderSelectionDraft = () => {
+    if (!isDragging || !rect || rect.width < 1 || rect.height < 1) return null;
+    return (
+      <div
+        className="selection-draft"
+        style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height }}
+      >
+        <span>{Math.round(rect.width)} × {Math.round(rect.height)}</span>
+      </div>
+    );
+  };
+
   // Edges are resize targets, never pan targets. The eight handles below
   // provide enlarged hit areas; the interior is the only move surface.
   const renderMoveZones = () => null;
@@ -384,6 +396,9 @@ export function CaptureOverlay({
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
     >
+      {/* ======== SELECTION DRAFT ======== */}
+      {renderSelectionDraft()}
+
       {/* ======== SELECTING PHASE ======== */}
       {phase === "selecting" && (
         <>

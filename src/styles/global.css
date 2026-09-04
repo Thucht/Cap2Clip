@@ -150,6 +150,28 @@ html, body, #root {
   pointer-events: none;
 }
 
+.selection-draft {
+  position: absolute;
+  border: 2px solid #34C759;
+  background: rgba(52, 199, 89, 0.08);
+  box-shadow: 0 0 0 1px rgba(52, 199, 89, 0.45);
+  pointer-events: none;
+  z-index: 10030;
+}
+
+.selection-draft span {
+  position: absolute;
+  top: -28px;
+  left: 0;
+  padding: 3px 8px;
+  border-radius: 4px;
+  color: white;
+  background: rgba(0, 0, 0, 0.82);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .selection-size {
   position: absolute;
   top: -28px;
@@ -531,13 +553,16 @@ html, body, #root {
 }
 
 .stroke-slider {
-  -webkit-appearance: slider-vertical;
-  appearance: slider-vertical;
-  width: 18px;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
   height: 64px;
-  writing-mode: bt-lr;
+  writing-mode: vertical-lr;
+  direction: rtl;
   background: transparent;
   cursor: pointer;
+  display: block;
+  padding: 0;
 }
 
 .stroke-slider::-webkit-slider-runnable-track {
