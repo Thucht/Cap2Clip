@@ -85,7 +85,32 @@ function exportCanvasWithBlur(canvas: Canvas, opts: any): string {
   const ctx = output.getContext("2d");
   if (!ctx) return canvas.toDataURL(opts);
 
-  ctx.drawImage(canvas.lowerCanvasEl, 0, 0, output.width, output.height);
+  // Keep the background image as the immutable source for processing. Fabric's
+  // lower canvas also contains controls/objects and is not reliable as source.
+  const backgroundImage = (canvas as any).backgroundImage as any;
+  const previousVisibility = blurObjects.map((object: any) => object.visible);
+  blurObjects.forEach((object: any) => { object.visible = false; });
+  canvas.renderAll();
+
+  // Build the source from the clean screenshot background, not from Fabric's
+  // lower canvas: Fabric may have had the transparent blur path removed by
+  // the previous render and therefore has nothing useful to process here.
+  const source = document.createElement("canvas");
+  source.width = output.width;
+  source.height = output.height;
+  const sourceCtx = source.getContext("2d");
+  if (!sourceCtx) return canvas.toDataURL(opts);
+  if (backgroundImage) {
+    const bg = backgroundImage.getElement?.() || backgroundImage._element;
+    const scaleX = backgroundImage.scaleX || 1;
+    const scaleY = backgroundImage.scaleY || 1;
+    sourceCtx.drawImage(bg, backgroundImage.left || 0, backgroundImage.top || 0,
+      (backgroundImage.width || output.width) * scaleX,
+      (backgroundImage.height || output.height) * scaleY);
+  } else {
+    sourceCtx.drawImage(canvas.lowerCanvasEl, 0, 0, output.width, output.height);
+  }
+  ctx.drawImage(source, 0, 0);
   for (const object of blurObjects as any[]) {
     const bounds = object.data.bounds || object.getBoundingRect();
     const pad = object.strokeWidth * 2;
@@ -127,12 +152,7 @@ function exportCanvasWithBlur(canvas: Canvas, opts: any): string {
     ctx.drawImage(patch, x, y);
   }
 
-  // Draw non-blur Fabric objects above the processed background. Hide only
-  // blur paths while taking the foreground snapshot so they are not painted twice.
-  const previousVisibility = blurObjects.map((object: any) => object.visible);
-  blurObjects.forEach((object: any) => { object.visible = false; });
-  canvas.renderAll();
-  ctx.drawImage(canvas.lowerCanvasEl, 0, 0, output.width, output.height);
+  // Restore the transparent blur paths after their pixels have been processed.
   blurObjects.forEach((object: any, index: number) => { object.visible = previousVisibility[index]; });
   canvas.renderAll();
   return output.toDataURL("image/png");

@@ -146,6 +146,26 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
           </div>
 
           <div className="setting-row">
+            <label>Delete annotation</label>
+            <input
+              type="text"
+              value={local.shortcuts?.delete ?? "Delete"}
+              onChange={(e) => setLocal({ ...local, shortcuts: { ...local.shortcuts, delete: e.target.value } })}
+              className="shortcut-input"
+            />
+          </div>
+
+          <div className="setting-row">
+            <label>Increase / decrease size</label>
+            <input
+              type="text"
+              value={local.shortcuts?.size ?? "Mouse wheel"}
+              onChange={(e) => setLocal({ ...local, shortcuts: { ...local.shortcuts, size: e.target.value } })}
+              className="shortcut-input"
+            />
+          </div>
+
+          <div className="setting-row">
             <label>Enable Global Shortcuts</label>
             <button
               className={`toggle-btn ${local.shortcuts_enabled ? "on" : "off"}`}

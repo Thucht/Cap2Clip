@@ -457,11 +457,16 @@ export function AnnotationToolbar({
     if (e.key === "Delete" || e.key === "Backspace") {
       const canvas = getCanvas();
       const activeObj = canvas?.getActiveObject();
-      if (!activeObj || !(activeObj as any).isEditing) handleDelete();
+      if (activeObj && !(activeObj as any).isEditing) { e.preventDefault(); handleDelete(); }
     }
     if (e.ctrlKey && e.key === "z") { e.preventDefault(); handleUndo(); }
     if (e.ctrlKey && e.key === "y") { e.preventDefault(); handleRedo(); }
   }, [handleDelete, handleUndo, handleRedo]);
+
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault();
+    changeSize(strokeWidthRef.current + (e.deltaY < 0 ? 1 : -1));
+  }, [changeSize]);
 
   // Bracket shortcuts must work even when the toolbar is not focused.
   useEffect(() => {
@@ -513,6 +518,7 @@ export function AnnotationToolbar({
         className="annotation-toolbar annotation-toolbar-horizontal"
         style={{ left: horizontalLeft, top: horizontalTop, ...displayStyle }}
         onKeyDown={handleKeyDown}
+        onWheel={handleWheel}
         tabIndex={0}
         onMouseDown={(e) => e.stopPropagation()}
       >
@@ -579,6 +585,7 @@ export function AnnotationToolbar({
         className="annotation-toolbar annotation-toolbar-vertical"
         style={{ left: safeVerticalLeft, top: safeVerticalTop, ...displayStyle }}
         onMouseDown={(e) => e.stopPropagation()}
+        onWheel={handleWheel}
       >
         <div className="toolbar-section vertical">
           {tools.map((tool) => {
