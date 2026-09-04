@@ -31,7 +31,6 @@ const COLORS = [
   "#00c7be", "#007aff", "#5856d6", "#af52de", "#ff2d92", "#8e8e93",
 ];
 
-const TOOLBAR_GAP = 10;
 
 export function AnnotationToolbar({
   onCopy,
@@ -78,27 +77,31 @@ export function AnnotationToolbar({
   const screenW = window.innerWidth;
   const screenH = window.innerHeight;
 
-  // Horizontal toolbar: snap above or below selection
-  const hFitsBelow = rect.y + rect.height + TOOLBAR_GAP + hSize.height <= screenH;
-  const hFitsAbove = rect.y - TOOLBAR_GAP - hSize.height >= 0;
+  // Both toolbars share the same compact sizing and use corner-aware placement.
+  // This avoids overlap on tiny selections: horizontal is placed below/above,
+  // vertical is placed to the side, and only their corners may meet.
+  const hGap = 8;
+  const vGap = 8;
+  const hFitsBelow = rect.y + rect.height + hGap + hSize.height <= screenH;
+  const hFitsAbove = rect.y - hGap - hSize.height >= 0;
   const horizontalTop = hFitsBelow
-    ? rect.y + rect.height + TOOLBAR_GAP
+    ? rect.y + rect.height + hGap
     : hFitsAbove
-      ? rect.y - TOOLBAR_GAP - hSize.height
-      : Math.min(rect.y + rect.height + TOOLBAR_GAP, screenH - hSize.height - 8);
+      ? rect.y - hGap - hSize.height
+      : Math.max(8, Math.min(screenH - hSize.height - 8, rect.y + rect.height + hGap));
   const horizontalLeft = Math.max(
     8,
     Math.min(screenW - hSize.width - 8, rect.x + rect.width / 2 - hSize.width / 2)
   );
 
-  // Vertical toolbar: snap left or right of selection
-  const vFitsRight = rect.x + rect.width + TOOLBAR_GAP + vSize.width <= screenW;
-  const vFitsLeft = rect.x - TOOLBAR_GAP - vSize.width >= 0;
-  const verticalLeft = vFitsRight
-    ? rect.x + rect.width + TOOLBAR_GAP
+  const vFitsRight = rect.x + rect.width + vGap + vSize.width <= screenW;
+  const vFitsLeft = rect.x - vGap - vSize.width >= 0;
+  const preferredVerticalLeft = vFitsRight
+    ? rect.x + rect.width + vGap
     : vFitsLeft
-      ? rect.x - TOOLBAR_GAP - vSize.width
-      : Math.min(rect.x + rect.width + TOOLBAR_GAP, screenW - vSize.width - 8);
+      ? rect.x - vGap - vSize.width
+      : Math.max(8, Math.min(screenW - vSize.width - 8, rect.x + rect.width + vGap));
+  const verticalLeft = preferredVerticalLeft;
   const verticalTop = Math.max(
     8,
     Math.min(screenH - vSize.height - 8, rect.y + rect.height / 2 - vSize.height / 2)

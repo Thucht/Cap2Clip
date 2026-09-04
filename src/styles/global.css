@@ -314,11 +314,13 @@ html, body, #root {
   position: fixed;
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   background: rgba(20, 20, 20, 0.95);
   backdrop-filter: blur(20px);
-  padding: 4px 6px;
-  border-radius: 10px;
+  padding: 3px 4px;
+  border-radius: 8px;
+  transform: scale(0.85);
+  transform-origin: top left;
   border: 1px solid rgba(255, 255, 255, 0.1);
   z-index: 10002;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
@@ -334,7 +336,7 @@ html, body, #root {
 /* Vertical: drawing tools (move on top + color + stroke + font size) */
 .annotation-toolbar-vertical {
   flex-direction: column;
-  padding: 6px 4px;
+  padding: 3px 3px;
   max-height: 80vh;
   overflow: visible;
 }
@@ -342,8 +344,17 @@ html, body, #root {
 .annotation-toolbar-vertical .toolbar-section.vertical {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   align-items: center;
+}
+
+/* Toolbars scale from their top-left anchor; keep the measured box compact. */
+.annotation-toolbar-horizontal {
+  transform-origin: top center;
+}
+
+.annotation-toolbar-vertical {
+  transform-origin: top left;
 }
 
 /* Undo/Redo/Delete laid out horizontally */
