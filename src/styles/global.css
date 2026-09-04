@@ -336,6 +336,9 @@ html, body, #root {
 /* Vertical: drawing tools (move on top + color + stroke + font size) */
 .annotation-toolbar-vertical {
   flex-direction: column;
+  width: 38px;
+  min-width: 38px;
+  max-width: 38px;
   padding: 3px 3px;
   max-height: 80vh;
   overflow: visible;
@@ -621,14 +624,16 @@ html, body, #root {
 .stroke-slider {
   -webkit-appearance: none;
   appearance: none;
-  width: 64px;
-  height: 20px;
+  /* Keep the layout box narrow; only the control is rotated visually. */
+  width: 20px;
+  height: 64px;
   transform: rotate(-90deg);
+  transform-origin: center center;
   background: transparent;
   cursor: pointer;
   display: block;
   padding: 0;
-  margin: 22px 0;
+  margin: 0;
 }
 
 .stroke-slider::-webkit-slider-runnable-track {

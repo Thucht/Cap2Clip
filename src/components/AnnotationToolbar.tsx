@@ -57,7 +57,12 @@ export function AnnotationToolbar({
   blurBrushRef.current = blurBrush;
   const undoStack = useRef<string[]>([]);
   const redoStack = useRef<string[]>([]);
-  const toolHandlersRef = useRef<{ down: (opt: any) => void; move: (opt: any) => void; up: () => void } | null>(null);
+  const toolHandlersRef = useRef<{
+    down: (opt: any) => void;
+    move: (opt: any) => void;
+    up: () => void;
+    pathCreated?: (event: any) => void;
+  } | null>(null);
   const colorRef = useRef(color);
   const strokeWidthRef = useRef(strokeWidth);
   colorRef.current = color;
@@ -208,6 +213,7 @@ export function AnnotationToolbar({
       canvas.off("mouse:down", previous.down);
       canvas.off("mouse:move", previous.move);
       canvas.off("mouse:up", previous.up);
+      if (previous.pathCreated) canvas.off("path:created", previous.pathCreated);
       toolHandlersRef.current = null;
     }
 
@@ -245,17 +251,36 @@ export function AnnotationToolbar({
       return;
     }
 
-    if (tool === "pen" || tool === "highlight" || tool === "blur") {
+    if (tool === "pen" || tool === "highlight") {
       canvas.isDrawingMode = true;
       const brush = new PencilBrush(canvas);
-      if (tool === "blur") {
-        brush.width = strokeWidthRef.current * (blurBrushRef.current === "soft" ? 3 : 2);
-        brush.color = blurBrushRef.current === "solid" ? "rgba(32,32,36,0.94)" : "rgba(120,120,120,0.45)";
-      } else {
-        brush.color = tool === "highlight" ? `${colorRef.current}66` : colorRef.current;
-        brush.width = tool === "highlight" ? strokeWidthRef.current * 4 : strokeWidthRef.current;
-      }
+      brush.color = tool === "highlight" ? `${colorRef.current}66` : colorRef.current;
+      brush.width = tool === "highlight" ? strokeWidthRef.current * 4 : strokeWidthRef.current;
       canvas.freeDrawingBrush = brush;
+      return;
+    }
+
+    if (tool === "blur") {
+      canvas.isDrawingMode = true;
+      const brush = new PencilBrush(canvas);
+      brush.width = strokeWidthRef.current * (blurBrushRef.current === "soft" ? 3 : 2);
+      brush.color = "rgba(255,255,255,0.01)";
+      const pathCreated = ({ path }: any) => {
+        const bounds = path.getBoundingRect();
+        path.set({
+          selectable: false,
+          evented: false,
+          fill: "transparent",
+          stroke: "transparent",
+          opacity: 1,
+          data: { kind: "blur", brush: blurBrushRef.current, bounds },
+        });
+        path.setCoords();
+        canvas.renderAll();
+      };
+      canvas.freeDrawingBrush = brush;
+      canvas.on("path:created", pathCreated);
+      toolHandlersRef.current = { down: () => undefined, move: () => undefined, up: () => undefined, pathCreated };
       return;
     }
 
