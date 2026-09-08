@@ -53,7 +53,7 @@ fn main() {
             settings::set_auto_start,
             settings::check_for_update,
             settings::set_ignore_cursor_events,
-            settings::resize_window_to_fullscreen,
+            settings::resize_window_to_monitor,
             clipboard::copy_image_to_clipboard,
         ])
         .setup(|app| {

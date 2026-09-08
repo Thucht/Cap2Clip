@@ -364,13 +364,16 @@ pub fn set_ignore_cursor_events(window: tauri::WebviewWindow, ignore: bool) -> R
 }
 
 #[tauri::command]
-pub fn resize_window_to_fullscreen(window: tauri::WebviewWindow) -> Result<(), String> {
-    use tauri::{LogicalPosition, LogicalSize};
-    if let Some(monitor) = window.current_monitor().map_err(|e| e.to_string())? {
+pub fn resize_window_to_monitor(window: tauri::WebviewWindow, x: f64, y: f64) -> Result<(), String> {
+    use tauri::{PhysicalPosition, PhysicalSize};
+    if let Some(monitor) = window
+        .monitor_from_point(x, y)
+        .map_err(|e| e.to_string())?
+    {
         let pos = monitor.position();
         let size = monitor.size();
-        window.set_position(LogicalPosition::new(pos.x as f64, pos.y as f64)).map_err(|e| e.to_string())?;
-        window.set_size(LogicalSize::new(size.width as f64, size.height as f64)).map_err(|e| e.to_string())?;
+        window.set_position(PhysicalPosition::new(pos.x, pos.y)).map_err(|e| e.to_string())?;
+        window.set_size(PhysicalSize::new(size.width, size.height)).map_err(|e| e.to_string())?;
     }
     Ok(())
 }

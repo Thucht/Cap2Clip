@@ -1,10 +1,12 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { Canvas, FabricImage } from "fabric";
 import type { SelectionGeometry } from "../App";
+import type { ImageMapping } from "../geometry";
 
 interface AnnotationCanvasProps {
   fullScreenshot: string;
   rect: SelectionGeometry;
+  imageMapping: ImageMapping;
 }
 
 /**
@@ -13,7 +15,7 @@ interface AnnotationCanvasProps {
  * On export (toDataURL), we output only the cropped region with annotations.
  */
 export const AnnotationCanvas = forwardRef<any, AnnotationCanvasProps>(
-  ({ fullScreenshot, rect }, ref) => {
+  ({ fullScreenshot, rect, imageMapping }, ref) => {
     const canvasElRef = useRef<HTMLCanvasElement>(null);
     const fabricRef = useRef<Canvas | null>(null);
     const imgRef = useRef<HTMLImageElement | null>(null);
@@ -44,7 +46,7 @@ export const AnnotationCanvas = forwardRef<any, AnnotationCanvasProps>(
       const img = new Image();
       img.onload = () => {
         imgRef.current = img;
-        updateBackground(canvas, img, rect);
+        updateBackground(canvas, img, rect, imageMapping);
       };
       img.src = fullScreenshot;
 
@@ -63,8 +65,8 @@ export const AnnotationCanvas = forwardRef<any, AnnotationCanvasProps>(
       // Resize canvas
       canvas.setDimensions({ width: rect.width, height: rect.height });
 
-      updateBackground(canvas, imgRef.current, rect);
-    }, [rect]);
+      updateBackground(canvas, imgRef.current, rect, imageMapping);
+    }, [rect, imageMapping.scaleX, imageMapping.scaleY]);
 
     return (
       <div className="annotation-canvas-wrapper">
@@ -141,23 +143,29 @@ function exportCanvasWithBlur(canvas: Canvas, opts: any): string {
   return output.toDataURL("image/png");
 }
 
-function updateBackground(canvas: Canvas, img: HTMLImageElement, rect: SelectionGeometry) {
+function updateBackground(canvas: Canvas, img: HTMLImageElement, rect: SelectionGeometry, imageMapping: ImageMapping) {
   // Create a temporary canvas to crop the region
   const tempCanvas = document.createElement("canvas");
-  tempCanvas.width = rect.width;
-  tempCanvas.height = rect.height;
+  const sourceX = rect.x * imageMapping.scaleX;
+  const sourceY = rect.y * imageMapping.scaleY;
+  const sourceWidth = rect.width * imageMapping.scaleX;
+  const sourceHeight = rect.height * imageMapping.scaleY;
+  tempCanvas.width = Math.max(1, Math.round(sourceWidth));
+  tempCanvas.height = Math.max(1, Math.round(sourceHeight));
   const ctx = tempCanvas.getContext("2d");
   if (!ctx) return;
 
   ctx.drawImage(
     img,
-    rect.x, rect.y, rect.width, rect.height,
-    0, 0, rect.width, rect.height
+    sourceX, sourceY, sourceWidth, sourceHeight,
+    0, 0, tempCanvas.width, tempCanvas.height
   );
 
   const croppedDataUrl = tempCanvas.toDataURL("image/png");
 
   FabricImage.fromURL(croppedDataUrl).then((fabricImg) => {
+    fabricImg.scaleX = rect.width / tempCanvas.width;
+    fabricImg.scaleY = rect.height / tempCanvas.height;
     canvas.backgroundImage = fabricImg;
     canvas.renderAll();
   });

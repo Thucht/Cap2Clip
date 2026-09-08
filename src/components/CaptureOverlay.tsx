@@ -3,10 +3,12 @@ import { AnnotationCanvas } from "./AnnotationCanvas";
 import { AnnotationToolbar } from "./AnnotationToolbar";
 import type { Tool } from "./AnnotationToolbar";
 import type { Preset, SelectionGeometry } from "../App";
+import { calculateImageMapping, clampSelection, toImageRect } from "../geometry";
 
 interface CaptureOverlayProps {
   phase: "selecting" | "annotating";
   fullScreenshot: string | null;
+  captureSize: { width: number; height: number };
   selectionRect: SelectionGeometry | null;
   presets: Preset[];
   activeTool: Tool;
@@ -24,6 +26,7 @@ interface CaptureOverlayProps {
 export function CaptureOverlay({
   phase,
   fullScreenshot,
+  captureSize,
   selectionRect,
   presets,
   activeTool,
@@ -55,6 +58,7 @@ export function CaptureOverlay({
 
   const screenW = window.innerWidth;
   const screenH = window.innerHeight;
+  const imageMapping = calculateImageMapping(captureSize.width, captureSize.height, screenW, screenH);
 
   // Initialize rect when entering selecting phase
   useEffect(() => {
@@ -66,8 +70,9 @@ export function CaptureOverlay({
   useEffect(() => {
     if (phase === "selecting") {
       if (selectionRect) {
-        setRect(selectionRect);
-        setRegionRects([selectionRect]);
+        const visibleRect = clampSelection(selectionRect, screenW, screenH);
+        setRect(visibleRect);
+        setRegionRects([visibleRect]);
       } else {
         setCaptureFrame(fullScreenshot);
         setRect(null);
@@ -84,8 +89,9 @@ export function CaptureOverlay({
   // Sync rect when entering annotating phase
   useEffect(() => {
     if (phase === "annotating" && selectionRect) {
-      setRect(selectionRect);
-      setRegionRects((current) => current.length > 0 ? current : [selectionRect]);
+      const visibleRect = clampSelection(selectionRect, screenW, screenH);
+      setRect(visibleRect);
+      setRegionRects((current) => current.length > 0 ? current : [visibleRect]);
     }
   }, [phase, selectionRect]);
 
@@ -264,9 +270,10 @@ export function CaptureOverlay({
       }
       const image = new Image();
       image.onload = () => {
+        const imageRect = toImageRect(region, imageMapping);
         const crop = document.createElement("canvas");
-        crop.width = Math.max(1, Math.round(region.width));
-        crop.height = Math.max(1, Math.round(region.height));
+        crop.width = Math.max(1, Math.round(imageRect.width));
+        crop.height = Math.max(1, Math.round(imageRect.height));
         const context = crop.getContext("2d");
         if (!context) {
           reject(new Error("Could not create crop canvas"));
@@ -274,7 +281,7 @@ export function CaptureOverlay({
         }
         context.drawImage(
           image,
-          region.x, region.y, region.width, region.height,
+          imageRect.x, imageRect.y, imageRect.width, imageRect.height,
           0, 0, crop.width, crop.height
         );
         resolve(crop.toDataURL("image/png"));
@@ -282,32 +289,32 @@ export function CaptureOverlay({
       image.onerror = () => reject(new Error("Could not load screenshot"));
       image.src = captureFrame || fullScreenshot;
     });
-  }, [captureFrame, fullScreenshot]);
+  }, [captureFrame, fullScreenshot, imageMapping.scaleX, imageMapping.scaleY]);
 
   const getExportImages = useCallback(async (): Promise<string[]> => {
     if (!multiRegion || regionRects.length <= 1) {
       if (!canvasRef.current?.toDataURL) return [];
-      return [canvasRef.current.toDataURL({ format: "png", multiplier: 1 })];
+      return [canvasRef.current.toDataURL({ format: "png", multiplier: imageMapping.scaleX })];
     }
 
     const images: string[] = [];
     for (let index = 0; index < regionRects.length; index += 1) {
       const isActiveRegion = index === regionRects.length - 1;
       if (isActiveRegion && canvasRef.current?.toDataURL) {
-        images.push(canvasRef.current.toDataURL({ format: "png", multiplier: 1 }));
+        images.push(canvasRef.current.toDataURL({ format: "png", multiplier: imageMapping.scaleX }));
       } else {
         images.push(await cropRegion(regionRects[index]));
       }
     }
     return images;
-  }, [multiRegion, regionRects, cropRegion]);
+  }, [multiRegion, regionRects, cropRegion, imageMapping.scaleX]);
 
   const handleCopyClick = useCallback(() => {
     if (canvasRef.current?.toDataURL) {
-      const dataUrl = canvasRef.current.toDataURL({ format: "png", multiplier: 1 });
+      const dataUrl = canvasRef.current.toDataURL({ format: "png", multiplier: imageMapping.scaleX });
       onCopy(dataUrl);
     }
-  }, [onCopy]);
+  }, [imageMapping.scaleX, onCopy]);
 
   const handleSaveClick = useCallback(async () => {
     try {
@@ -495,6 +502,7 @@ export function CaptureOverlay({
               ref={canvasRef}
               fullScreenshot={captureFrame || fullScreenshot}
               rect={rect}
+              imageMapping={imageMapping}
             />
           </div>
 

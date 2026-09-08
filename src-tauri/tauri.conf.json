@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Cap2Clip",
   "version": "1.0.0",
-  "identifier": "com.cap2clip.app",
+  "identifier": "com.thucht.cap2clip",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -41,6 +41,11 @@
       "../icon.ico"
     ],
     "resources": [],
+    "publisher": "Thucht Software",
+    "copyright": "Copyright © 2026 Thucht Software. All rights reserved.",
+    "category": "Utility",
+    "shortDescription": "Fast screenshot capture and annotation for Windows.",
+    "longDescription": "Cap2Clip is a lightweight screenshot capture and annotation utility for fast region capture, markup, copying, and saving.",
     "windows": {
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",

@@ -14,12 +14,12 @@ pub struct CaptureResult {
     pub y: i32,
 }
 
-/// Capture the entire screen (all monitors combined or primary)
+/// Capture the monitor containing the mouse cursor.
 #[tauri::command]
-pub fn capture_full_screen() -> Result<CaptureResult, String> {
-    let screens = Screen::all().map_err(|e| e.to_string())?;
-
-    let screen = screens.first().ok_or("No screen found")?;
+pub fn capture_full_screen(app: AppHandle) -> Result<CaptureResult, String> {
+    let cursor = app.cursor_position().map_err(|e| e.to_string())?;
+    let screen = Screen::from_point(cursor.x.round() as i32, cursor.y.round() as i32)
+        .map_err(|e| e.to_string())?;
 
     let image = screen.capture().map_err(|e| e.to_string())?;
 
@@ -38,17 +38,17 @@ pub fn capture_full_screen() -> Result<CaptureResult, String> {
         image_data: format!("data:image/png;base64,{}", base64_str),
         width,
         height,
-        x: 0,
-        y: 0,
+        x: screen.display_info.x,
+        y: screen.display_info.y,
     })
 }
 
 /// Capture a specific region of the screen
 #[tauri::command]
-pub fn capture_region(x: u32, y: u32, width: u32, height: u32) -> Result<CaptureResult, String> {
-    let screens = Screen::all().map_err(|e| e.to_string())?;
-
-    let screen = screens.first().ok_or("No screen found")?;
+pub fn capture_region(app: AppHandle, x: u32, y: u32, width: u32, height: u32) -> Result<CaptureResult, String> {
+    let cursor = app.cursor_position().map_err(|e| e.to_string())?;
+    let screen = Screen::from_point(cursor.x.round() as i32, cursor.y.round() as i32)
+        .map_err(|e| e.to_string())?;
 
     let image = screen.capture().map_err(|e| e.to_string())?;
 

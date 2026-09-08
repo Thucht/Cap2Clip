@@ -25,6 +25,14 @@ export interface SelectionGeometry {
   height: number;
 }
 
+export interface CaptureResult {
+  image_data: string;
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+}
+
 export interface AppSettings {
   shortcut_region: string;
   shortcut_fullscreen: string;
@@ -44,6 +52,7 @@ type SessionPhase = "idle" | "selecting" | "annotating" | "settings";
 function App() {
   const [phase, setPhase] = useState<SessionPhase>("idle");
   const [fullScreenshot, setFullScreenshot] = useState<string | null>(null);
+  const [captureSize, setCaptureSize] = useState({ width: 1, height: 1 });
   const [selectionRect, setSelectionRect] = useState<SelectionGeometry | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>("move");
   const [settings, setSettings] = useState<AppSettings>({
@@ -83,9 +92,14 @@ function App() {
 
     listen("region-capture", async () => {
       try {
-        const result = await invoke<{ image_data: string; width: number; height: number }>("capture_full_screen");
+        const result = await invoke<CaptureResult>("capture_full_screen");
         const previous = settingsRef.current.previous_selection;
+        await invoke("resize_window_to_monitor", {
+          x: result.x + result.width / 2,
+          y: result.y + result.height / 2,
+        });
         setFullScreenshot(result.image_data);
+        setCaptureSize({ width: result.width, height: result.height });
         setSelectionRect(previous);
         setActiveTool("move");
         // A remembered frame is already a valid selection: enter annotate
@@ -98,7 +112,7 @@ function App() {
 
     listen("fullscreen-capture", async () => {
       try {
-        const result = await invoke<{ image_data: string; width: number; height: number }>("capture_full_screen");
+        const result = await invoke<CaptureResult>("capture_full_screen");
         await invoke("copy_image_to_clipboard", { dataUrl: result.image_data });
       } catch (e) {
         console.error("Full screen capture failed:", e);
@@ -217,9 +231,6 @@ function App() {
     // Toggle click-through and resize: when not capturing, window ignores cursor so other apps work
     const ignore = phase === "idle";
     invoke("set_ignore_cursor_events", { ignore }).catch(console.error);
-    if (phase === "selecting" || phase === "annotating") {
-      invoke("resize_window_to_fullscreen").catch(console.error);
-    }
   }, [phase]);
 
   return (
@@ -228,6 +239,7 @@ function App() {
         <CaptureOverlay
           phase={phase}
           fullScreenshot={fullScreenshot}
+          captureSize={captureSize}
           selectionRect={selectionRect}
           presets={settings.presets.filter((p) => p.enabled)}
           activeTool={activeTool}

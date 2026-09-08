@@ -1,8 +1,11 @@
 [package]
-name = "screenshot-app"
+name = "cap2clip"
 version = "1.0.0"
-description = "A Lightshot-like screenshot capture and annotation tool"
-authors = ["you"]
+description = "Fast screenshot capture and annotation for Windows"
+authors = ["Thucht Software"]
+license = "MIT"
+homepage = "https://github.com/Thucht/Cap2Clip"
+repository = "https://github.com/Thucht/Cap2Clip"
 edition = "2021"
 
 [build-dependencies]
