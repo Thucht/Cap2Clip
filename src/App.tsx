@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { flushSync } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -98,15 +99,24 @@ function App() {
           x: result.x + result.width / 2,
           y: result.y + result.height / 2,
         });
-        setFullScreenshot(result.image_data);
-        setCaptureSize({ width: result.width, height: result.height });
-        setSelectionRect(previous);
-        setActiveTool("move");
-        // A remembered frame is already a valid selection: enter annotate
-        // immediately so the menu is never missing on the first capture.
-        setPhase(previous ? "annotating" : "selecting");
+        // Commit the interactive UI while the transparent window is still
+        // hidden. Showing an empty transparent WebView can produce an opaque
+        // white surface on Windows, especially with multiple 4K displays.
+        flushSync(() => {
+          setFullScreenshot(result.image_data);
+          setCaptureSize({ width: result.width, height: result.height });
+          setSelectionRect(previous);
+          setActiveTool("move");
+          // A remembered frame is already a valid selection: enter annotate
+          // immediately so the menu is never missing on the first capture.
+          setPhase(previous ? "annotating" : "selecting");
+        });
+        const window = getCurrentWindow();
+        await window.show();
+        await window.setFocus();
       } catch (e) {
         console.error("Full screen capture failed:", e);
+        await getCurrentWindow().hide();
       }
     }).then((fn) => unlisteners.push(fn));
 

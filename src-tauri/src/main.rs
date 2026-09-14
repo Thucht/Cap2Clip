@@ -32,10 +32,8 @@ fn main() {
                             let _ = app.emit("fullscreen-capture", ());
                         } else if shortcut_str.contains("PrintScreen") {
                             // PrtScn: Region capture
-                            if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
+                            // Keep the transparent overlay hidden while the screenshot is
+                            // taken. The frontend shows it only after capture completes.
                             let _ = app.emit("region-capture", ());
                         }
                     }
