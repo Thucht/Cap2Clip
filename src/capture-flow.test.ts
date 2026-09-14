@@ -30,5 +30,12 @@ assert(
   regionCaptureHandler.includes("flushSync"),
   "The selecting UI must be committed before the overlay window becomes visible",
 );
+const interactiveIndex = regionCaptureHandler.indexOf(
+  'invoke("set_ignore_cursor_events", { ignore: false })',
+);
+assert(
+  interactiveIndex >= 0 && interactiveIndex < showIndex,
+  "The overlay must accept pointer input before it becomes visible",
+);
 
 console.log("capture flow tests passed");

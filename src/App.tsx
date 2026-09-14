@@ -112,6 +112,9 @@ function App() {
           setPhase(previous ? "annotating" : "selecting");
         });
         const window = getCurrentWindow();
+        // The hidden idle window is click-through. Disable that explicitly
+        // before showing it instead of waiting for the phase effect.
+        await invoke("set_ignore_cursor_events", { ignore: false });
         await window.show();
         await window.setFocus();
       } catch (e) {
