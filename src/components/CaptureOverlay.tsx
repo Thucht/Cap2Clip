@@ -4,6 +4,7 @@ import { AnnotationToolbar } from "./AnnotationToolbar";
 import type { Tool } from "./AnnotationToolbar";
 import type { Preset, SelectionGeometry } from "../App";
 import { calculateImageMapping, clampSelection, toImageRect } from "../geometry";
+import { matchesShortcut } from "../shortcuts";
 
 interface CaptureOverlayProps {
   phase: "selecting" | "annotating";
@@ -20,6 +21,7 @@ interface CaptureOverlayProps {
   onCancel: () => void;
   shortcutCopy: string;
   shortcutSave: string;
+  shortcutCancel: string;
   toolShortcuts?: { [key: string]: string };
 }
 
@@ -36,6 +38,9 @@ export function CaptureOverlay({
   onSaveDialog,
   onQuickSave,
   onCancel,
+  shortcutCopy,
+  shortcutSave,
+  shortcutCancel,
   toolShortcuts,
 }: CaptureOverlayProps) {
   const [rect, setRect] = useState<SelectionGeometry | null>(selectionRect);
@@ -52,7 +57,10 @@ export function CaptureOverlay({
   const [regionRects, setRegionRects] = useState<SelectionGeometry[]>(selectionRect ? [selectionRect] : []);
   // All multi-capture regions are cropped from this immutable frame.
   const [captureFrame, setCaptureFrame] = useState<string | null>(fullScreenshot);
-  const [captureRects, setCaptureRects] = useState<SelectionGeometry[]>([]);
+  // Composite snapshots (annotations included) taken when a region is sealed
+  // because the user moved on to the next one. `null` entries mean the region
+  // has no annotations and is exported as a plain crop of the frame.
+  const [capturedImages, setCapturedImages] = useState<(string | null)[]>([]);
   const canvasRef = useRef<any>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
 
@@ -69,6 +77,7 @@ export function CaptureOverlay({
 
   useEffect(() => {
     if (phase === "selecting") {
+      setCapturedImages([]);
       if (selectionRect) {
         const visibleRect = clampSelection(selectionRect, screenW, screenH);
         setRect(visibleRect);
@@ -191,14 +200,31 @@ export function CaptureOverlay({
     }
   }, [rect, isResizing, isMoving, isDragging, startPoint, resizeStart, moveStart, clamp, constrainRatio, setActiveRect]);
 
+  // Seal the active region: freeze its composited render (annotations and
+  // redaction patches included) and clear the canvas so the annotations cannot
+  // bleed into the region the user is about to select.
+  const commitActiveRegion = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!rect || !canvas?.toDataURL || !canvas?.clearAnnotations) return;
+    const objects = canvas.getCanvas?.()?.getObjects?.() ?? [];
+    if (objects.length === 0) return;
+    const snapshot = canvas.toDataURL({ format: "png", multiplier: imageMapping.scaleX });
+    const index = regionRects.length - 1;
+    setCapturedImages((current) => {
+      const next = current.slice();
+      next[index] = snapshot;
+      return next;
+    });
+    canvas.clearAnnotations();
+  }, [rect, regionRects.length, imageMapping.scaleX]);
+
   const handleMouseUp = useCallback(() => {
     if (isDragging && draftRect && draftRect.width > 5 && draftRect.height > 5) {
       if (phase === "annotating" && multiRegion) {
+        commitActiveRegion();
         setRegionRects((current) => [...current, draftRect]);
-        setCaptureRects((current) => [...current, draftRect]);
       } else {
         setRegionRects([draftRect]);
-        setCaptureRects([draftRect]);
       }
       setRect(draftRect);
       onEnterAnnotate(draftRect);
@@ -209,7 +235,7 @@ export function CaptureOverlay({
     setIsDragging(false);
     setIsResizing(null);
     setIsMoving(false);
-  }, [isDragging, draftRect, isResizing, isMoving, rect, phase, multiRegion, onEnterAnnotate]);
+  }, [isDragging, draftRect, isResizing, isMoving, rect, phase, multiRegion, commitActiveRegion, onEnterAnnotate]);
 
   // Resize handle mouse down - works in BOTH phases
   const handleResizeStart = useCallback((handle: string, e: React.MouseEvent) => {
@@ -255,12 +281,22 @@ export function CaptureOverlay({
       newRect = clamp(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
     }
 
+    if (phase === "annotating" && multiRegion && rect) {
+      // Changing the active region's shape would leave existing annotations
+      // misplaced, so the current region is sealed and the preset becomes a
+      // new region, exactly like drawing one.
+      commitActiveRegion();
+      setRegionRects((current) => [...current, newRect]);
+    } else if (phase === "annotating") {
+      setRegionRects([newRect]);
+    }
+
     setRect(newRect);
 
     if (phase === "annotating") {
       onEnterAnnotate(newRect);
     }
-  }, [screenW, screenH, clamp, phase, onEnterAnnotate]);
+  }, [screenW, screenH, clamp, phase, multiRegion, rect, commitActiveRegion, onEnterAnnotate]);
 
   const cropRegion = useCallback((region: SelectionGeometry): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -303,11 +339,13 @@ export function CaptureOverlay({
       if (isActiveRegion && canvasRef.current?.toDataURL) {
         images.push(canvasRef.current.toDataURL({ format: "png", multiplier: imageMapping.scaleX }));
       } else {
-        images.push(await cropRegion(regionRects[index]));
+        // Sealed regions keep their composited snapshot when they had
+        // annotations; annotation-free regions fall back to a plain crop.
+        images.push(capturedImages[index] ?? await cropRegion(regionRects[index]));
       }
     }
     return images;
-  }, [multiRegion, regionRects, cropRegion, imageMapping.scaleX]);
+  }, [multiRegion, regionRects, capturedImages, cropRegion, imageMapping.scaleX]);
 
   const handleCopyClick = useCallback(() => {
     if (canvasRef.current?.toDataURL) {
@@ -332,18 +370,22 @@ export function CaptureOverlay({
     }
   }, [getExportImages, onQuickSave]);
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts. The configured accelerators are the only source of
+  // truth, and typing inside a text annotation must not be hijacked.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const canvas = canvasRef.current?.getCanvas?.();
+      if ((canvas?.getActiveObject() as any)?.isEditing) return;
+
       if (phase === "annotating") {
-        if ((e.ctrlKey || e.metaKey) && e.key === "c") { e.preventDefault(); handleCopyClick(); }
-        if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); handleQuickSaveClick(); }
+        if (matchesShortcut(e, shortcutCopy)) { e.preventDefault(); handleCopyClick(); return; }
+        if (matchesShortcut(e, shortcutSave)) { e.preventDefault(); handleQuickSaveClick(); return; }
       }
-      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+      if (matchesShortcut(e, shortcutCancel)) { e.preventDefault(); onCancel(); }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [phase, handleCopyClick, handleQuickSaveClick, onCancel]);
+  }, [phase, shortcutCopy, shortcutSave, shortcutCancel, handleCopyClick, handleQuickSaveClick, onCancel]);
 
   // Render backdrops (darkened areas outside selection)
   const renderBackdrops = () => {
@@ -483,10 +525,10 @@ export function CaptureOverlay({
         <>
           {renderBackdrops()}
 
-          {multiRegion && captureRects.slice(0, -1).map((region, index) => (
+          {multiRegion && regionRects.slice(0, -1).map((region, index) => (
             <div
               key={`region-${index}`}
-              className={`multi-region-outline region-${index % 5}`}
+              className={`multi-region-outline region-${(index % 4) + 1}`}
               style={{ left: region.x, top: region.y, width: region.width, height: region.height }}
             >
               <span>{index + 1}</span>

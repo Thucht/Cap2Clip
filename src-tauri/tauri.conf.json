@@ -10,7 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
     "trayIcon": {
       "iconPath": "../icon.png",
       "iconAsTemplate": true
@@ -20,6 +20,7 @@
     },
     "windows": [
       {
+        "label": "main",
         "title": "Cap2Clip",
         "width": 1200,
         "height": 800,
@@ -50,11 +51,6 @@
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
       "timestampUrl": ""
-    }
-  },
-  "plugins": {
-    "shell": {
-      "open": true
     }
   }
 }

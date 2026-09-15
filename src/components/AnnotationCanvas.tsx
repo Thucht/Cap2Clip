@@ -1,5 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { Canvas, FabricImage } from "fabric";
+// Registers the custom `data` property that redaction strokes rely on.
+import "../fabric-config";
 import type { SelectionGeometry } from "../App";
 import type { ImageMapping } from "../geometry";
 
@@ -28,6 +30,14 @@ export const AnnotationCanvas = forwardRef<any, AnnotationCanvasProps>(
         return fullScreenshot;
       },
       getCanvas: () => fabricRef.current,
+      // Called when an annotation session moves on to the next capture region.
+      clearAnnotations: () => {
+        const canvas = fabricRef.current;
+        if (!canvas) return;
+        canvas.remove(...canvas.getObjects());
+        canvas.discardActiveObject();
+        canvas.renderAll();
+      },
     }));
 
     useEffect(() => {
@@ -95,7 +105,10 @@ function exportCanvasWithBlur(canvas: Canvas, opts: any): string {
   canvas.renderAll();
   ctx.drawImage(canvas.lowerCanvasEl, 0, 0, output.width, output.height);
   for (const object of blurObjects as any[]) {
-    const bounds = object.data.bounds || object.getBoundingRect();
+    // Recompute the bounds instead of trusting the values captured when the
+    // stroke was drawn: a stroke that was moved (or restored by undo) must be
+    // processed where it currently sits.
+    const bounds = readLiveBounds(object);
     const pad = object.strokeWidth * 2;
     const x = Math.max(0, (bounds.left - pad) * multiplier);
     const y = Math.max(0, (bounds.top - pad) * multiplier);
@@ -141,6 +154,14 @@ function exportCanvasWithBlur(canvas: Canvas, opts: any): string {
   blurObjects.forEach((object: any, index: number) => { object.visible = previousVisibility[index]; });
   canvas.renderAll();
   return output.toDataURL("image/png");
+}
+
+function readLiveBounds(object: any): { left: number; top: number; width: number; height: number } {
+  if (typeof object.getBoundingRect === "function") {
+    const rect = object.getBoundingRect();
+    if (rect) return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+  }
+  return object.data.bounds;
 }
 
 function updateBackground(canvas: Canvas, img: HTMLImageElement, rect: SelectionGeometry, imageMapping: ImageMapping) {

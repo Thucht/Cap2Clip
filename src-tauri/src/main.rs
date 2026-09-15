@@ -4,13 +4,13 @@
 mod capture;
 mod settings;
 mod clipboard;
+mod shortcuts;
 
 use tauri::{
     Emitter, Manager,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
-use tauri_plugin_global_shortcut::ShortcutState;
 
 fn main() {
     #[cfg(target_os = "windows")]
@@ -23,23 +23,7 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, shortcut, event| {
-                    if event.state == ShortcutState::Pressed {
-                        let shortcut_str = shortcut.to_string();
-                        if shortcut_str.contains("PrintScreen") && shortcut_str.contains("Shift") {
-                            let _ = app.emit("fullscreen-capture", ());
-                        } else if shortcut_str.contains("PrintScreen") {
-                            // PrtScn: Region capture
-                            // Keep the transparent overlay hidden while the screenshot is
-                            // taken. The frontend shows it only after capture completes.
-                            let _ = app.emit("region-capture", ());
-                        }
-                    }
-                })
-                .build(),
-        )
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             capture::capture_full_screen,
             capture::capture_region,
@@ -49,14 +33,24 @@ fn main() {
             settings::load_settings,
             settings::save_settings,
             settings::set_auto_start,
-            settings::check_for_update,
             settings::set_ignore_cursor_events,
             settings::resize_window_to_monitor,
             clipboard::copy_image_to_clipboard,
         ])
         .setup(|app| {
             setup_tray(app)?;
-            register_shortcuts(app)?;
+            // Global shortcuts are OS-level registrations, so they follow the
+            // persisted settings instead of being hard-coded.
+            let app_settings = match settings::load_settings() {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    eprintln!("Could not read settings, falling back to defaults: {error}");
+                    settings::AppSettings::default()
+                }
+            };
+            if let Err(error) = shortcuts::apply(app.app_handle(), &app_settings) {
+                eprintln!("Could not register global shortcuts: {error}");
+            }
             // Make window click-through when idle so it doesn't block mouse events
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_ignore_cursor_events(true);
@@ -67,14 +61,6 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-fn register_shortcuts(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    use tauri_plugin_global_shortcut::GlobalShortcutExt;
-    let shortcut_manager = app.global_shortcut();
-    shortcut_manager.register("PrintScreen")?;
-    shortcut_manager.register("Shift+PrintScreen")?;
-    Ok(())
 }
 
 fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -111,6 +97,12 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     let _ = app.emit("fullscreen-capture", ());
                 }
                 "show_settings" => {
+                    // The window starts hidden, so the settings UI has to be
+                    // brought up explicitly before the phase event is sent.
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
                     let _ = app.emit("show-settings", ());
                 }
                 "quit" => {

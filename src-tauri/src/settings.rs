@@ -303,7 +303,13 @@ fn merge_json_defaults(value: &mut serde_json::Value, defaults: &serde_json::Val
 }
 
 #[tauri::command]
-pub fn save_settings(settings: AppSettings) -> Result<(), String> {
+pub async fn save_settings(app: tauri::AppHandle, settings: AppSettings) -> Result<(), String> {
+    // Shortcuts are OS-level registrations, so bind the new values before the
+    // file is written: a rejected accelerator must not be persisted as if it
+    // had been applied. This runs as an async command because registering a
+    // shortcut has to execute on the main thread.
+    crate::shortcuts::apply(&app, &settings)?;
+
     let path = get_settings_path();
     let content = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     fs::write(&path, content).map_err(|e| e.to_string())
@@ -334,28 +340,6 @@ pub fn set_auto_start(enabled: bool) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-#[derive(serde::Serialize)]
-pub struct UpdateInfo {
-    pub current_version: String,
-    pub latest_version: String,
-    pub update_available: bool,
-    pub download_url: Option<String>,
-    pub release_notes: Option<String>,
-}
-
-#[tauri::command]
-pub async fn check_for_update() -> Result<UpdateInfo, String> {
-    let current = env!("CARGO_PKG_VERSION").to_string();
-    let latest = current.clone();
-    Ok(UpdateInfo {
-        current_version: current,
-        latest_version: latest,
-        update_available: false,
-        download_url: None,
-        release_notes: None,
-    })
 }
 
 #[tauri::command]

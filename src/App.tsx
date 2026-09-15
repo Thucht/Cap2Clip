@@ -112,6 +112,9 @@ function App() {
           setPhase(previous ? "annotating" : "selecting");
         });
         const window = getCurrentWindow();
+        // The capture overlay must sit above every other window while the
+        // session is open; the settings dialog below must not.
+        await window.setAlwaysOnTop(true);
         // The hidden idle window is click-through. Disable that explicitly
         // before showing it instead of waiting for the phase effect.
         await invoke("set_ignore_cursor_events", { ignore: false });
@@ -132,8 +135,19 @@ function App() {
       }
     }).then((fn) => unlisteners.push(fn));
 
-    listen("show-settings", () => {
+    listen("show-settings", async () => {
       setPhase("settings");
+      // The window is hidden while idle, so it has to be brought up explicitly.
+      // Drop always-on-top so the settings dialog behaves like a normal window.
+      try {
+        const window = getCurrentWindow();
+        await window.setAlwaysOnTop(false);
+        await invoke("set_ignore_cursor_events", { ignore: false });
+        await window.show();
+        await window.setFocus();
+      } catch (e) {
+        console.error("Could not open the settings window:", e);
+      }
     }).then((fn) => unlisteners.push(fn));
 
     return () => unlisteners.forEach((fn) => fn());
@@ -226,17 +240,19 @@ function App() {
     getCurrentWindow().hide();
   }, []);
 
-  const handleSettingsSave = useCallback(async (newSettings: AppSettings) => {
+  const handleSettingsSave = useCallback(async (newSettings: AppSettings): Promise<string | null> => {
     try {
-      // Persist the JSON first. If auto-start fails, keep the dialog open and
-      // do not pretend the whole settings transaction succeeded.
+      // Persist first: the backend re-registers the global shortcuts and rejects
+      // values it cannot bind, so the error has to reach the dialog.
       await invoke("save_settings", { settings: newSettings });
       await invoke("set_auto_start", { enabled: newSettings.auto_start });
       setSettings(newSettings);
       setPhase("idle");
       getCurrentWindow().hide();
+      return null;
     } catch (e) {
       console.error("Failed to save settings:", e);
+      return e instanceof Error ? e.message : String(e);
     }
   }, []);
 
@@ -264,6 +280,7 @@ function App() {
           onCancel={handleCancel}
           shortcutCopy={settings.shortcut_copy}
           shortcutSave={settings.shortcut_save}
+          shortcutCancel={settings.shortcut_cancel}
           toolShortcuts={settings.shortcuts}
         />
       )}

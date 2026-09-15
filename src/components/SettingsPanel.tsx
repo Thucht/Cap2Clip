@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 
 import type { AppSettings, Preset } from "../App";
+import { shortcutFromEvent } from "../shortcuts";
 
 interface SettingsPanelProps {
   settings: AppSettings;
-  onSave: (settings: AppSettings) => void;
+  /** Resolves to an error message when the values could not be applied. */
+  onSave: (settings: AppSettings) => Promise<string | null>;
   onClose: () => void;
 }
 
@@ -24,6 +26,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
   const [newPresetH, setNewPresetH] = useState("");
   const [newPresetType, setNewPresetType] = useState<"fixed_size" | "aspect_ratio">("fixed_size");
   const [conflictError, setConflictError] = useState("");
+  const [recordingKey, setRecordingKey] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"general" | "shortcuts" | "presets">("general");
 
   useEffect(() => {
@@ -38,7 +41,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
     setLocal((current) => ({ ...current, [key]: value }));
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const entries = [
       [local.shortcut_region, "Region Capture"],
       [local.shortcut_fullscreen, "Full Screen"],
@@ -58,7 +61,10 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
     }
     const presets = local.presets.map((preset, index) => ({ ...preset, order: index }));
     setConflictError("");
-    onSave({ ...local, presets, shortcuts: { ...local.shortcuts } });
+    // The backend rejects accelerators it cannot register, so report that here
+    // instead of closing the dialog as if the change had been applied.
+    const error = await onSave({ ...local, presets, shortcuts: { ...local.shortcuts } });
+    if (error) setConflictError(error);
   };
 
   const addPreset = () => {
@@ -105,9 +111,11 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
     setLocal((current) => ({ ...current, presets: arr.map((preset, order) => ({ ...preset, order })) }));
   };
 
-  const shortcutRows: Array<[string, string]> = [
+  const globalShortcutRows: Array<[string, string]> = [
     ["shortcut_region", "Region Capture"],
     ["shortcut_fullscreen", "Full Screen → Clipboard"],
+  ];
+  const appShortcutRows: Array<[string, string]> = [
     ["shortcut_copy", "Copy"],
     ["shortcut_save", "Save"],
     ["shortcut_cancel", "Cancel"],
@@ -116,16 +124,48 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
     ["pen", "Pen"], ["line", "Line"], ["arrow", "Arrow"], ["rect", "Rectangle"],
     ["ellipse", "Ellipse"], ["highlight", "Highlight"], ["blur", "Blur"], ["text", "Text"],
   ];
+
+  // Shortcuts are recorded from a real key press, so the stored value uses the
+  // physical key names the OS-level registration expects.
   const renderShortcutInput = (key: string, label: string) => {
     const isGlobal = key.startsWith("shortcut_");
     const value = isGlobal ? String(local[key as keyof AppSettings] ?? "") : local.shortcuts?.[key] ?? "";
+    const recording = recordingKey === key;
+    const setValue = (next: string) => {
+      if (isGlobal) updateField(key as keyof AppSettings, next as never);
+      else updateShortcuts({ [key]: next });
+    };
     return (
       <div className="setting-row" key={key}>
         <label>{label}</label>
-        <input type="text" value={value}
-          readOnly={key === "shortcut_region" || key === "shortcut_fullscreen" || key === "shortcut_cancel"}
-          onChange={(e) => isGlobal ? updateField(key as keyof AppSettings, e.target.value as never) : updateShortcuts({ [key]: e.target.value })}
-          className="shortcut-input" placeholder="Not assigned" />
+        <input
+          type="text"
+          value={recording ? "Press a key combination…" : value}
+          readOnly
+          className={`shortcut-input ${recording ? "recording" : ""}`}
+          onClick={() => setRecordingKey(key)}
+          onFocus={() => setRecordingKey(key)}
+          onBlur={() => setRecordingKey(null)}
+          onKeyDown={(event) => {
+            if (!recording) return;
+            event.preventDefault();
+            if (event.key === "Escape") {
+              setRecordingKey(null);
+              return;
+            }
+            if (event.key === "Backspace" || event.key === "Delete") {
+              setValue("");
+              setRecordingKey(null);
+              return;
+            }
+            const recorded = shortcutFromEvent(event);
+            if (!recorded) return;
+            setValue(recorded);
+            setRecordingKey(null);
+          }}
+          placeholder="Not assigned"
+          aria-label={`${label} shortcut`}
+        />
       </div>
     );
   };
@@ -149,7 +189,10 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             <div className="setting-row"><div><label>Global shortcuts</label><small>Allow capture shortcuts outside the app</small></div><button className={`toggle-btn ${local.shortcuts_enabled ? "on" : "off"}`} onClick={() => updateField("shortcuts_enabled", !local.shortcuts_enabled)}>{local.shortcuts_enabled ? "ON" : "OFF"}</button></div>
           </div>}
           {activeTab === "shortcuts" && <div className="settings-section">
-            <h3>Global shortcuts</h3>{shortcutRows.map(([key, label]) => renderShortcutInput(key, label))}
+            <h3>Global capture shortcuts</h3><p className="settings-help">Registered with the operating system, so they work outside Cap2Clip. Click a field and press the combination you want.</p>
+            {globalShortcutRows.map(([key, label]) => renderShortcutInput(key, label))}
+            <h3 className="settings-subheading">In-app shortcuts</h3><p className="settings-help">Active while the capture overlay is open. Click a field and press the combination you want.</p>
+            {appShortcutRows.map(([key, label]) => renderShortcutInput(key, label))}
             <h3 className="settings-subheading">Annotation tools</h3><p className="settings-help">Press a key to switch tools. Leave empty to disable.</p>
             {toolRows.map(([key, label]) => renderShortcutInput(key, label))}
             <div className="setting-row"><div><label>Delete annotation</label><small>Delete or Backspace</small></div><span className="shortcut-badge">Delete</span></div>
@@ -166,7 +209,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             <h4>Add custom preset</h4><div className="preset-form"><input placeholder="Name" value={newPresetName} onChange={(e) => setNewPresetName(e.target.value)} /><select value={newPresetType} onChange={(e) => setNewPresetType(e.target.value as "fixed_size" | "aspect_ratio")}><option value="fixed_size">Fixed size</option><option value="aspect_ratio">Aspect ratio</option></select><input type="number" min="1" placeholder="Width" value={newPresetW} onChange={(e) => setNewPresetW(e.target.value)} /><input type="number" min="1" placeholder="Height" value={newPresetH} onChange={(e) => setNewPresetH(e.target.value)} /><button className="settings-secondary-btn" onClick={addPreset}>Add preset</button></div>
           </div>}
         </div>
-        <div className="settings-actions"><button className="cancel-btn" onClick={onClose}>Cancel</button><button className="save-btn" onClick={handleSave}>Save changes</button></div>
+        <div className="settings-actions"><button className="cancel-btn" onClick={onClose}>Cancel</button><button className="save-btn" onClick={() => { void handleSave(); }}>Save changes</button></div>
       </div>
     </div>
   );

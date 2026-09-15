@@ -1,7 +1,9 @@
 import { useState, useCallback, useRef, useLayoutEffect, useEffect } from "react";
-import { PencilBrush, Line, Rect, Ellipse, IText, Triangle } from "fabric";
-import type { Canvas } from "fabric";
+import { PencilBrush, Line, Rect, Ellipse, IText, Triangle, util } from "fabric";
+import type { Canvas, FabricObject } from "fabric";
 import type { Preset, SelectionGeometry } from "../App";
+import { SERIALIZED_CUSTOM_PROPERTIES } from "../fabric-config";
+import { matchesShortcut } from "../shortcuts";
 import {
   IconCopy, IconSave, IconCancel, IconUndo, IconRedo, IconTrash,
   IconPen, IconLine, IconArrow, IconRect, IconEllipse, IconHighlight, IconBlur, IconText,
@@ -69,6 +71,8 @@ export function AnnotationToolbar({
   const strokeWidthRef = useRef(strokeWidth);
   colorRef.current = color;
   strokeWidthRef.current = strokeWidth;
+  const toolRef = useRef<Tool>(activeTool);
+  toolRef.current = activeTool;
   const hToolbarRef = useRef<HTMLDivElement>(null);
   const vToolbarRef = useRef<HTMLDivElement>(null);
   const [hSize, setHSize] = useState({ width: 360, height: 38 });
@@ -147,30 +151,79 @@ export function AnnotationToolbar({
     return null;
   };
 
-  const saveState = useCallback(() => {
-    const canvas = getCanvas();
-    if (canvas) {
-      undoStack.current.push(JSON.stringify(canvas.toJSON()));
-      redoStack.current = [];
-      if (undoStack.current.length > 50) undoStack.current.shift();
-    }
+  // Only the active tool decides which objects accept pointer input, so the
+  // state can be reapplied verbatim after a history restore.
+  const applyObjectInteractivity = useCallback((canvas: Canvas, tool: Tool) => {
+    const interactive = tool === "edit";
+    canvas.forEachObject((object: any) => {
+      object.set({ selectable: interactive, evented: interactive });
+    });
+    canvas.discardActiveObject();
+    canvas.renderAll();
   }, []);
 
-  const handleUndo = useCallback(() => {
+  // History snapshots keep the annotation objects only. Serializing the whole
+  // canvas would embed the screenshot background (a multi-megabyte data URL) in
+  // every undo state, and the redaction descriptor (`data`) has to be requested
+  // explicitly because Fabric drops unknown properties.
+  const snapshotObjects = useCallback((): string => {
+    const canvas = getCanvas();
+    if (!canvas) return "[]";
+    return JSON.stringify(
+      canvas.getObjects().map((object) => object.toObject(SERIALIZED_CUSTOM_PROPERTIES)),
+    );
+  }, []);
+
+  const restoreSnapshot = useCallback(
+    async (state: string) => {
+      const canvas = getCanvas();
+      if (!canvas) return;
+      const objects = (await util.enlivenObjects(JSON.parse(state))) as FabricObject[];
+      canvas.remove(...canvas.getObjects());
+      objects.forEach((object) => {
+        canvas.add(object);
+        object.setCoords();
+      });
+      applyObjectInteractivity(canvas, toolRef.current);
+    },
+    [applyObjectInteractivity],
+  );
+
+  const saveState = useCallback(() => {
+    if (!getCanvas()) return;
+    undoStack.current.push(snapshotObjects());
+    redoStack.current = [];
+    if (undoStack.current.length > 50) undoStack.current.shift();
+  }, [snapshotObjects]);
+
+  const handleUndo = useCallback(async () => {
     const canvas = getCanvas();
     if (!canvas || undoStack.current.length === 0) return;
-    redoStack.current.push(JSON.stringify(canvas.toJSON()));
-    const state = undoStack.current.pop()!;
-    canvas.loadFromJSON(state).then(() => canvas.renderAll());
-  }, []);
+    redoStack.current.push(snapshotObjects());
+    try {
+      await restoreSnapshot(undoStack.current.pop()!);
+    } catch (error) {
+      console.error("Undo failed:", error);
+    }
+  }, [restoreSnapshot, snapshotObjects]);
 
-  const handleRedo = useCallback(() => {
+  const handleRedo = useCallback(async () => {
     const canvas = getCanvas();
     if (!canvas || redoStack.current.length === 0) return;
-    undoStack.current.push(JSON.stringify(canvas.toJSON()));
-    const state = redoStack.current.pop()!;
-    canvas.loadFromJSON(state).then(() => canvas.renderAll());
-  }, []);
+    undoStack.current.push(snapshotObjects());
+    try {
+      await restoreSnapshot(redoStack.current.pop()!);
+    } catch (error) {
+      console.error("Redo failed:", error);
+    }
+  }, [restoreSnapshot, snapshotObjects]);
+
+  // A different region is a different drawing surface: history from the
+  // previous region cannot be replayed onto the new background crop.
+  useEffect(() => {
+    undoStack.current = [];
+    redoStack.current = [];
+  }, [rect]);
 
   const selectBlurBrush = useCallback((next: string) => {
     blurBrushRef.current = next;
@@ -225,31 +278,9 @@ export function AnnotationToolbar({
     canvas.defaultCursor = tool === "move" ? "move" : tool === "edit" ? "default" : tool === "select" ? "crosshair" : tool === "text" ? "text" : "crosshair";
     canvas.hoverCursor = tool === "edit" ? "move" : tool === "move" ? "move" : "default";
 
-    if (tool === "edit") {
-      canvas.forEachObject((object: any) => {
-        object.set({ selectable: true, evented: true });
-      });
-      canvas.discardActiveObject();
-      canvas.renderAll();
-      return;
-    }
+    applyObjectInteractivity(canvas, tool);
 
-    if (tool === "move") {
-      canvas.discardActiveObject();
-      canvas.forEachObject((object: any) => {
-        object.set({ selectable: false, evented: false });
-      });
-      canvas.renderAll();
-      return;
-    }
-
-    canvas.forEachObject((object: any) => {
-      object.set({ selectable: false, evented: false });
-    });
-    canvas.discardActiveObject();
-    canvas.renderAll();
-
-    if (tool === "select") {
+    if (tool === "edit" || tool === "move" || tool === "select") {
       return;
     }
 
@@ -412,7 +443,7 @@ export function AnnotationToolbar({
       toolHandlersRef.current = { down, move: noop, up: noop };
       canvas.on("mouse:down", down);
     }
-  }, [onToolChange, saveState]);
+  }, [onToolChange, saveState, applyObjectInteractivity]);
 
   const handleDelete = useCallback(() => {
     const canvas = getCanvas();
@@ -484,7 +515,7 @@ export function AnnotationToolbar({
         changeSize(strokeWidthRef.current + (e.code === "BracketLeft" ? -1 : 1));
         return;
       }
-      const shortcut = Object.entries(toolShortcuts).find(([, value]) => value && value.toLowerCase() === e.key.toLowerCase())?.[0] as Tool | undefined;
+      const shortcut = Object.entries(toolShortcuts).find(([, value]) => value && matchesShortcut(e, value))?.[0] as Tool | undefined;
       if (shortcut) { e.preventDefault(); setTool(shortcut); }
     };
     window.addEventListener("keydown", listener);
