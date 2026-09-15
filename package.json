@@ -12,7 +12,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "copy-release": "node scripts/copy-release-artifacts.mjs",
+    "build:release": "tauri build && npm run copy-release"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
