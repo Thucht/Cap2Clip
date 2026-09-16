@@ -355,19 +355,18 @@ pub fn resize_window_to_capture(
     width: u32,
     height: u32,
 ) -> Result<(), String> {
-    use tauri::{LogicalPosition, LogicalSize};
+    use tauri::{PhysicalPosition, PhysicalSize};
 
-    // CaptureResult uses physical screenshot pixels, but Tauri's window APIs
-    // must receive logical desktop coordinates. Convert using the monitor's
-    // actual scale factor instead of placing a physical-sized WebView.
-    let scale = window.scale_factor().map_err(|e| e.to_string())?;
-    let logical_x = x as f64 / scale;
-    let logical_y = y as f64 / scale;
+    // `x/y/width/height` already come from the screenshot backend as physical
+    // desktop pixels of the target monitor. `window.scale_factor()` returns the
+    // scale of whichever monitor the window currently sits on, which is wrong
+    // on mixed-DPI desktops and shifts the overlay by (scale-1)*coordinate.
+    // Use Physical* everywhere so no DPI math is involved.
     window
-        .set_position(LogicalPosition::new(logical_x, logical_y))
+        .set_position(PhysicalPosition::new(x, y))
         .map_err(|e| e.to_string())?;
     window
-        .set_size(LogicalSize::new(width as f64 / scale, height as f64 / scale))
+        .set_size(PhysicalSize::new(width, height))
         .map_err(|e| e.to_string())?;
     Ok(())
 }

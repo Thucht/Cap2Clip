@@ -57,6 +57,12 @@ fn main() {
                 let _ = window.set_ignore_cursor_events(true);
                 // The capture window is an overlay, not a second taskbar application.
                 let _ = window.set_skip_taskbar(true);
+                // Force a fully transparent WebView background. Without this,
+                // WebView2 composites an opaque surface on top of the
+                // transparent Tauri window, which shows up as a solid gray
+                // frame (e.g. when Windows activates the window after a click
+                // on the taskbar icon or tray icon).
+                let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
             }
             Ok(())
         })
@@ -88,10 +94,11 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .on_menu_event(|app, event| {
             match event.id.as_ref() {
                 "capture_region" => {
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
+                    // The frontend owns show/focus: it captures the desktop,
+                    // resizes the overlay onto the target monitor, commits the
+                    // React tree with flushSync, and only then shows the
+                    // window. Showing an empty transparent WebView here would
+                    // flash an opaque gray surface on Windows.
                     let _ = app.emit("region-capture", ());
                 }
                 "capture_fullscreen" => {
@@ -120,10 +127,9 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             } = event
             {
                 let app = tray.app_handle();
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                // Frontend shows the window after the overlay content is
+                // committed; showing it here would flash an empty (gray)
+                // transparent WebView.
                 let _ = app.emit("region-capture", ());
             }
         })
