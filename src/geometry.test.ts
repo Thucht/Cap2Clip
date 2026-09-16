@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateImageMapping, clampSelection, toImageRect } from "./geometry";
+import { calculateImageMapping, clampSelection, toImageRect, viewportPoint } from "./geometry";
 
 describe("capture coordinate mapping", () => {
   it("preserves coordinates at 100% display scale", () => {
@@ -14,6 +14,13 @@ describe("capture coordinate mapping", () => {
 
   it("falls back to 1:1 when the viewport is not measurable yet", () => {
     expect(calculateImageMapping(1920, 1080, 0, 0)).toEqual({ scaleX: 1, scaleY: 1 });
+  });
+
+  it("keeps pointer coordinates relative to a monitor-local overlay", () => {
+    expect(viewportPoint(3840, 400, { x: 1920, y: 0, width: 3840, height: 2160 })).toEqual({
+      x: 1920,
+      y: 400,
+    });
   });
 
   it("crops selections using physical screenshot pixels", () => {

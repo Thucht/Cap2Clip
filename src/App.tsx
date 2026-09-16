@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { CaptureOverlay } from "./components/CaptureOverlay";
 import { SettingsPanel } from "./components/SettingsPanel";
 import type { Tool } from "./components/AnnotationToolbar";
@@ -50,6 +51,15 @@ export interface AppSettings {
 
 type SessionPhase = "idle" | "selecting" | "annotating" | "settings";
 
+const isSettingsWindow = new URLSearchParams(window.location.search).get("window") === "settings";
+
+async function openSettingsWindow() {
+  const existing = await WebviewWindow.getByLabel("settings");
+  if (!existing) return;
+  await existing.show();
+  await existing.setFocus();
+}
+
 function App() {
   const [phase, setPhase] = useState<SessionPhase>("idle");
   const [fullScreenshot, setFullScreenshot] = useState<string | null>(null);
@@ -70,7 +80,8 @@ function App() {
     shortcuts: {},
   });
 
-  // Load settings on mount
+  // Load settings on mount. This also runs in the dedicated settings window
+  // so the form never starts from defaults and overwrites saved preferences.
   useEffect(() => {
     invoke<AppSettings>("load_settings")
       .then((loaded) => {
@@ -89,16 +100,23 @@ function App() {
   settingsRef.current = settings;
 
   useEffect(() => {
+    if (isSettingsWindow) return;
     const unlisteners: (() => void)[] = [];
 
     listen("region-capture", async () => {
       try {
         const result = await invoke<CaptureResult>("capture_full_screen");
         const previous = settingsRef.current.previous_selection;
-        await invoke("resize_window_to_monitor", {
-          x: result.x + result.width / 2,
-          y: result.y + result.height / 2,
+        await invoke("resize_window_to_capture", {
+          x: result.x,
+          y: result.y,
+          width: result.width,
+          height: result.height,
         });
+        // Let WebView2 apply the new monitor/DPI layout before React measures
+        // the overlay. Otherwise the first pointer event can use the previous
+        // monitor's viewport dimensions.
+        await new Promise((resolve) => setTimeout(resolve, 50));
         // Commit the interactive UI while the transparent window is still
         // hidden. Showing an empty transparent WebView can produce an opaque
         // white surface on Windows, especially with multiple 4K displays.
@@ -136,18 +154,7 @@ function App() {
     }).then((fn) => unlisteners.push(fn));
 
     listen("show-settings", async () => {
-      setPhase("settings");
-      // The window is hidden while idle, so it has to be brought up explicitly.
-      // Drop always-on-top so the settings dialog behaves like a normal window.
-      try {
-        const window = getCurrentWindow();
-        await window.setAlwaysOnTop(false);
-        await invoke("set_ignore_cursor_events", { ignore: false });
-        await window.show();
-        await window.setFocus();
-      } catch (e) {
-        console.error("Could not open the settings window:", e);
-      }
+      await openSettingsWindow();
     }).then((fn) => unlisteners.push(fn));
 
     return () => unlisteners.forEach((fn) => fn());
@@ -242,13 +249,15 @@ function App() {
 
   const handleSettingsSave = useCallback(async (newSettings: AppSettings): Promise<string | null> => {
     try {
-      // Persist first: the backend re-registers the global shortcuts and rejects
-      // values it cannot bind, so the error has to reach the dialog.
       await invoke("save_settings", { settings: newSettings });
       await invoke("set_auto_start", { enabled: newSettings.auto_start });
       setSettings(newSettings);
-      setPhase("idle");
-      getCurrentWindow().hide();
+      if (isSettingsWindow) {
+        await getCurrentWindow().close();
+      } else {
+        setPhase("idle");
+        await getCurrentWindow().hide();
+      }
       return null;
     } catch (e) {
       console.error("Failed to save settings:", e);
@@ -257,10 +266,15 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (isSettingsWindow) return;
     // Toggle click-through and resize: when not capturing, window ignores cursor so other apps work
     const ignore = phase === "idle";
     invoke("set_ignore_cursor_events", { ignore }).catch(console.error);
   }, [phase]);
+
+  if (isSettingsWindow) {
+    return <SettingsPanel settings={settings} onSave={handleSettingsSave} onClose={() => getCurrentWindow().close()} />;
+  }
 
   return (
     <div style={{ width: "100%", height: "100%" }}>
@@ -285,13 +299,7 @@ function App() {
         />
       )}
 
-      {phase === "settings" && (
-        <SettingsPanel
-          settings={settings}
-          onSave={handleSettingsSave}
-          onClose={() => { setPhase("idle"); getCurrentWindow().hide(); }}
-        />
-      )}
+
 
       {phase === "idle" && <div className="idle-state" />}
     </div>

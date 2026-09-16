@@ -348,16 +348,26 @@ pub fn set_ignore_cursor_events(window: tauri::WebviewWindow, ignore: bool) -> R
 }
 
 #[tauri::command]
-pub fn resize_window_to_monitor(window: tauri::WebviewWindow, x: f64, y: f64) -> Result<(), String> {
-    use tauri::{PhysicalPosition, PhysicalSize};
-    if let Some(monitor) = window
-        .monitor_from_point(x, y)
-        .map_err(|e| e.to_string())?
-    {
-        let pos = monitor.position();
-        let size = monitor.size();
-        window.set_position(PhysicalPosition::new(pos.x, pos.y)).map_err(|e| e.to_string())?;
-        window.set_size(PhysicalSize::new(size.width, size.height)).map_err(|e| e.to_string())?;
-    }
+pub fn resize_window_to_capture(
+    window: tauri::WebviewWindow,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    use tauri::{LogicalPosition, LogicalSize};
+
+    // CaptureResult uses physical screenshot pixels, but Tauri's window APIs
+    // must receive logical desktop coordinates. Convert using the monitor's
+    // actual scale factor instead of placing a physical-sized WebView.
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let logical_x = x as f64 / scale;
+    let logical_y = y as f64 / scale;
+    window
+        .set_position(LogicalPosition::new(logical_x, logical_y))
+        .map_err(|e| e.to_string())?;
+    window
+        .set_size(LogicalSize::new(width as f64 / scale, height as f64 / scale))
+        .map_err(|e| e.to_string())?;
     Ok(())
 }

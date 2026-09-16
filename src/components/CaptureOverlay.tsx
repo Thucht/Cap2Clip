@@ -3,7 +3,7 @@ import { AnnotationCanvas } from "./AnnotationCanvas";
 import { AnnotationToolbar } from "./AnnotationToolbar";
 import type { Tool } from "./AnnotationToolbar";
 import type { Preset, SelectionGeometry } from "../App";
-import { calculateImageMapping, clampSelection, toImageRect } from "../geometry";
+import { calculateImageMapping, clampSelection, toImageRect, viewportPoint } from "../geometry";
 import { matchesShortcut } from "../shortcuts";
 
 interface CaptureOverlayProps {
@@ -63,10 +63,31 @@ export function CaptureOverlay({
   const [capturedImages, setCapturedImages] = useState<(string | null)[]>([]);
   const canvasRef = useRef<any>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
-
+  // The overlay is always resized to the captured monitor before it is shown.
+  // window.innerWidth/innerHeight therefore stay in the same logical space as
+  // pointer events and selection geometry.
   const screenW = window.innerWidth;
   const screenH = window.innerHeight;
   const imageMapping = calculateImageMapping(captureSize.width, captureSize.height, screenW, screenH);
+  // Fabric's canvas is rendered in CSS pixels. Exporting with the same
+  // physical-pixel multiplier used for the background keeps the saved image
+  // aligned with the selected rectangle.
+  const exportScale = imageMapping.scaleX;
+
+  useEffect(() => {
+    // Keep the native window and WebView dimensions as the single source of
+    // truth. React state here can lag one frame during a cross-monitor move.
+    const updateViewportSize = () => {
+      window.dispatchEvent(new Event("capture-viewport-resized"));
+    };
+    window.addEventListener("resize", updateViewportSize);
+    return () => window.removeEventListener("resize", updateViewportSize);
+  }, []);
+
+  const pointerPoint = useCallback((event: React.MouseEvent) => {
+    const bounds = overlayRef.current?.getBoundingClientRect();
+    return bounds ? viewportPoint(event.clientX, event.clientY, bounds) : { x: event.clientX, y: event.clientY };
+  }, []);
 
   // Initialize rect when entering selecting phase
   useEffect(() => {
@@ -141,26 +162,28 @@ export function CaptureOverlay({
   // preserves earlier regions in regionRects.
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (phase !== "selecting" && phase !== "annotating") return;
+    const point = pointerPoint(e);
 
     if (rect) {
-      const inX = e.clientX >= rect.x && e.clientX <= rect.x + rect.width;
-      const inY = e.clientY >= rect.y && e.clientY <= rect.y + rect.height;
+      const inX = point.x >= rect.x && point.x <= rect.x + rect.width;
+      const inY = point.y >= rect.y && point.y <= rect.y + rect.height;
       if (inX && inY) return;
     }
 
     e.preventDefault();
     setIsDragging(true);
-    setStartPoint({ x: e.clientX, y: e.clientY });
-    setDraftRect({ x: e.clientX, y: e.clientY, width: 0, height: 0 });
-  }, [phase, rect]);
+    setStartPoint(point);
+    setDraftRect({ x: point.x, y: point.y, width: 0, height: 0 });
+  }, [phase, rect, pointerPoint]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!rect) return;
+    const point = pointerPoint(e);
 
     // Resize
     if (isResizing) {
-      const dx = e.clientX - resizeStart.x;
-      const dy = e.clientY - resizeStart.y;
+      const dx = point.x - resizeStart.x;
+      const dy = point.y - resizeStart.y;
       let { rx, ry, rw, rh } = resizeStart;
       let nx = rx, ny = ry, nw = rw, nh = rh;
 
@@ -186,19 +209,19 @@ export function CaptureOverlay({
     }
     // Move
     else if (isMoving) {
-      const dx = e.clientX - moveStart.x;
-      const dy = e.clientY - moveStart.y;
+      const dx = point.x - moveStart.x;
+      const dy = point.y - moveStart.y;
       setActiveRect(clamp(moveStart.rx + dx, moveStart.ry + dy, rect.width, rect.height));
     }
     // Drag new selection
     else if (isDragging) {
-      const x = Math.min(startPoint.x, e.clientX);
-      const y = Math.min(startPoint.y, e.clientY);
-      const w = Math.abs(e.clientX - startPoint.x);
-      const h = Math.abs(e.clientY - startPoint.y);
+      const x = Math.min(startPoint.x, point.x);
+      const y = Math.min(startPoint.y, point.y);
+      const w = Math.abs(point.x - startPoint.x);
+      const h = Math.abs(point.y - startPoint.y);
       setDraftRect(clamp(x, y, w, h));
     }
-  }, [rect, isResizing, isMoving, isDragging, startPoint, resizeStart, moveStart, clamp, constrainRatio, setActiveRect]);
+  }, [rect, isResizing, isMoving, isDragging, startPoint, resizeStart, moveStart, clamp, constrainRatio, setActiveRect, pointerPoint]);
 
   // Seal the active region: freeze its composited render (annotations and
   // redaction patches included) and clear the canvas so the annotations cannot
@@ -208,7 +231,7 @@ export function CaptureOverlay({
     if (!rect || !canvas?.toDataURL || !canvas?.clearAnnotations) return;
     const objects = canvas.getCanvas?.()?.getObjects?.() ?? [];
     if (objects.length === 0) return;
-    const snapshot = canvas.toDataURL({ format: "png", multiplier: imageMapping.scaleX });
+    const snapshot = canvas.toDataURL({ format: "png", multiplier: exportScale });
     const index = regionRects.length - 1;
     setCapturedImages((current) => {
       const next = current.slice();
@@ -216,7 +239,7 @@ export function CaptureOverlay({
       return next;
     });
     canvas.clearAnnotations();
-  }, [rect, regionRects.length, imageMapping.scaleX]);
+  }, [rect, regionRects.length, exportScale]);
 
   const handleMouseUp = useCallback(() => {
     if (isDragging && draftRect && draftRect.width > 5 && draftRect.height > 5) {
@@ -243,16 +266,18 @@ export function CaptureOverlay({
     e.preventDefault();
     if (!rect) return;
     setIsResizing(handle);
-    setResizeStart({ x: e.clientX, y: e.clientY, rx: rect.x, ry: rect.y, rw: rect.width, rh: rect.height });
-  }, [rect]);
+    const point = pointerPoint(e);
+    setResizeStart({ x: point.x, y: point.y, rx: rect.x, ry: rect.y, rw: rect.width, rh: rect.height });
+  }, [rect, pointerPoint]);
 
   // Move handle mouse down - works in BOTH phases
   const handleMoveStart = useCallback((e: React.MouseEvent) => {
     if (!rect) return;
     e.stopPropagation();
     setIsMoving(true);
-    setMoveStart({ x: e.clientX, y: e.clientY, rx: rect.x, ry: rect.y });
-  }, [rect]);
+    const point = pointerPoint(e);
+    setMoveStart({ x: point.x, y: point.y, rx: rect.x, ry: rect.y });
+  }, [rect, pointerPoint]);
 
   // Preset selection
   const handlePresetSelect = useCallback((preset: Preset) => {
@@ -330,14 +355,14 @@ export function CaptureOverlay({
   const getExportImages = useCallback(async (): Promise<string[]> => {
     if (!multiRegion || regionRects.length <= 1) {
       if (!canvasRef.current?.toDataURL) return [];
-      return [canvasRef.current.toDataURL({ format: "png", multiplier: imageMapping.scaleX })];
+      return [canvasRef.current.toDataURL({ format: "png", multiplier: exportScale })];
     }
 
     const images: string[] = [];
     for (let index = 0; index < regionRects.length; index += 1) {
       const isActiveRegion = index === regionRects.length - 1;
       if (isActiveRegion && canvasRef.current?.toDataURL) {
-        images.push(canvasRef.current.toDataURL({ format: "png", multiplier: imageMapping.scaleX }));
+        images.push(canvasRef.current.toDataURL({ format: "png", multiplier: exportScale }));
       } else {
         // Sealed regions keep their composited snapshot when they had
         // annotations; annotation-free regions fall back to a plain crop.
@@ -345,14 +370,14 @@ export function CaptureOverlay({
       }
     }
     return images;
-  }, [multiRegion, regionRects, capturedImages, cropRegion, imageMapping.scaleX]);
+  }, [multiRegion, regionRects, capturedImages, cropRegion, exportScale]);
 
   const handleCopyClick = useCallback(() => {
     if (canvasRef.current?.toDataURL) {
-      const dataUrl = canvasRef.current.toDataURL({ format: "png", multiplier: imageMapping.scaleX });
+      const dataUrl = canvasRef.current.toDataURL({ format: "png", multiplier: exportScale });
       onCopy(dataUrl);
     }
-  }, [imageMapping.scaleX, onCopy]);
+  }, [exportScale, onCopy]);
 
   const handleSaveClick = useCallback(async () => {
     try {

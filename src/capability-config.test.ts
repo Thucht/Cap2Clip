@@ -7,18 +7,13 @@ const readJson = (relativePath: string) =>
 const config = readJson("../src-tauri/tauri.conf.json");
 const capability = readJson("../src-tauri/capabilities/main.json");
 
-/**
- * A capability only applies to windows it matches by label. A capability that
- * targets a label which does not exist grants nothing, which silently broke
- * window show/hide/set-focus (and therefore the whole overlay flow) before.
- */
 describe("capability configuration", () => {
   const configuredLabels: string[] = config.app.windows.map(
     (window: { label?: string }) => window.label ?? "main",
   );
 
-  it("declares the window label explicitly", () => {
-    expect(configuredLabels).toEqual(["main"]);
+  it("declares each configured window label explicitly", () => {
+    expect(configuredLabels).toEqual(["main", "settings"]);
     expect(config.app.windows[0].label).toBe("main");
   });
 

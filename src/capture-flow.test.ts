@@ -41,6 +41,11 @@ describe("capture flow ordering", () => {
 
     // The selecting UI must be committed before the window becomes visible.
     expect(regionCaptureHandler).toContain("flushSync");
+    const sizeIndex = regionCaptureHandler.indexOf(
+      'setCaptureSize({ width: result.width, height: result.height });',
+    );
+    expect(sizeIndex).toBeGreaterThanOrEqual(0);
+    expect(sizeIndex).toBeLessThan(showIndex);
 
     const interactiveIndex = regionCaptureHandler.indexOf(
       'invoke("set_ignore_cursor_events", { ignore: false })',

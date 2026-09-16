@@ -34,7 +34,7 @@ fn main() {
             settings::save_settings,
             settings::set_auto_start,
             settings::set_ignore_cursor_events,
-            settings::resize_window_to_monitor,
+            settings::resize_window_to_capture,
             clipboard::copy_image_to_clipboard,
         ])
         .setup(|app| {
@@ -51,6 +51,7 @@ fn main() {
             if let Err(error) = shortcuts::apply(app.app_handle(), &app_settings) {
                 eprintln!("Could not register global shortcuts: {error}");
             }
+
             // Make window click-through when idle so it doesn't block mouse events
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_ignore_cursor_events(true);

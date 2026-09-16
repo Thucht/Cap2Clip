@@ -10,7 +10,7 @@ export interface ImageMapping {
   scaleY: number;
 }
 
-/** Maps logical WebView coordinates to physical screenshot pixels. */
+/** Maps CSS viewport coordinates to physical screenshot pixels. */
 export function calculateImageMapping(
   imageWidth: number,
   imageHeight: number,
@@ -20,6 +20,18 @@ export function calculateImageMapping(
   return {
     scaleX: viewportWidth > 0 ? imageWidth / viewportWidth : 1,
     scaleY: viewportHeight > 0 ? imageHeight / viewportHeight : 1,
+  };
+}
+
+/**
+ * Convert a pointer position from the browser viewport into CSS coordinates
+ * relative to the overlay. clientX/clientY are already viewport-relative;
+ * do not apply devicePixelRatio to them.
+ */
+export function viewportPoint(clientX: number, clientY: number, bounds: Rect): { x: number; y: number } {
+  return {
+    x: clientX - bounds.x,
+    y: clientY - bounds.y,
   };
 }
 

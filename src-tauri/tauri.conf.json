@@ -31,6 +31,21 @@
         "skipTaskbar": true,
         "alwaysOnTop": false,
         "focus": false
+      },
+      {
+        "label": "settings",
+        "title": "Cap2Clip Settings",
+        "url": "index.html?window=settings",
+        "width": 640,
+        "height": 720,
+        "minWidth": 520,
+        "minHeight": 560,
+        "resizable": true,
+        "decorations": true,
+        "transparent": false,
+        "visible": false,
+        "skipTaskbar": false,
+        "focus": true
       }
     ]
   },

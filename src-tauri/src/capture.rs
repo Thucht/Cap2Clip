@@ -8,6 +8,9 @@ use tauri_plugin_dialog::DialogExt;
 #[derive(Debug, Serialize)]
 pub struct CaptureResult {
     pub image_data: String, // base64 PNG
+    // Physical pixel dimensions of image_data. The overlay is also resized
+    // with these physical dimensions, then the frontend maps CSS coordinates
+    // to this image using the actual WebView viewport size.
     pub width: u32,
     pub height: u32,
     pub x: i32,
@@ -31,8 +34,7 @@ pub fn capture_full_screen(app: AppHandle) -> Result<CaptureResult, String> {
         .write_to(&mut buffer, screenshots::image::ImageFormat::Png)
         .map_err(|e| e.to_string())?;
 
-    let base64_str = base64::engine::general_purpose::STANDARD
-        .encode(buffer.into_inner());
+    let base64_str = base64::engine::general_purpose::STANDARD.encode(buffer.into_inner());
 
     Ok(CaptureResult {
         image_data: format!("data:image/png;base64,{}", base64_str),
@@ -45,7 +47,13 @@ pub fn capture_full_screen(app: AppHandle) -> Result<CaptureResult, String> {
 
 /// Capture a specific region of the screen
 #[tauri::command]
-pub fn capture_region(app: AppHandle, x: u32, y: u32, width: u32, height: u32) -> Result<CaptureResult, String> {
+pub fn capture_region(
+    app: AppHandle,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> Result<CaptureResult, String> {
     let cursor = app.cursor_position().map_err(|e| e.to_string())?;
     let screen = Screen::from_point(cursor.x.round() as i32, cursor.y.round() as i32)
         .map_err(|e| e.to_string())?;
@@ -56,11 +64,11 @@ pub fn capture_region(app: AppHandle, x: u32, y: u32, width: u32, height: u32) -
     let img_w = image.width();
     let img_h = image.height();
 
-    // Apply inset: shift crop origin +1,1 and reduce dimensions by 2x2
-    let crop_x = x.saturating_add(1);
-    let crop_y = y.saturating_add(1);
-    let crop_w = width.saturating_sub(2).max(1);
-    let crop_h = height.saturating_sub(2).max(1);
+    // Coordinates are already physical pixels from the capture backend.
+    let crop_x = x;
+    let crop_y = y;
+    let crop_w = width.max(1);
+    let crop_h = height.max(1);
 
     // Clamp to image bounds
     let max_w = img_w.saturating_sub(crop_x);
@@ -77,8 +85,7 @@ pub fn capture_region(app: AppHandle, x: u32, y: u32, width: u32, height: u32) -
         .write_to(&mut buffer, screenshots::image::ImageFormat::Png)
         .map_err(|e| e.to_string())?;
 
-    let base64_str = base64::engine::general_purpose::STANDARD
-        .encode(buffer.into_inner());
+    let base64_str = base64::engine::general_purpose::STANDARD.encode(buffer.into_inner());
 
     Ok(CaptureResult {
         image_data: format!("data:image/png;base64,{}", base64_str),
