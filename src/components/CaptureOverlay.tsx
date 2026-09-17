@@ -13,12 +13,19 @@ import {
 } from "../geometry";
 import type { CaptureWindowGeometry, ImageMapping } from "../geometry";
 import { matchesShortcut } from "../shortcuts";
+import { invoke } from "@tauri-apps/api/core";
+import { cursorPosition } from "@tauri-apps/api/window";
+import { emit, listen } from "@tauri-apps/api/event";
+import { globalSelectionFromPhysicalCursor, intersectGlobalSelection } from "../capture-session";
+import type { CaptureSession, MonitorCapture } from "../capture-session";
 
 interface CaptureOverlayProps {
   phase: "selecting" | "annotating";
   fullScreenshot: string | null;
   captureSize: { width: number; height: number };
   captureGeometry: CaptureWindowGeometry | null;
+  captureSession?: CaptureSession | null;
+  monitorCapture?: MonitorCapture | null;
   selectionRect: SelectionGeometry | null;
   presets: Preset[];
   activeTool: Tool;
@@ -39,6 +46,8 @@ export function CaptureOverlay({
   fullScreenshot,
   captureSize,
   captureGeometry,
+  captureSession,
+  monitorCapture,
   selectionRect,
   presets,
   activeTool,
@@ -73,6 +82,7 @@ export function CaptureOverlay({
   const [capturedImages, setCapturedImages] = useState<(string | null)[]>([]);
   const canvasRef = useRef<any>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const globalDragStart = useRef<{ x: number; y: number } | null>(null);
   // The overlay window is fitted to the captured monitor before it is shown,
   // but a late WM_DPICHANGED / WebView2 rasterization change on a mixed-DPI
   // desktop can resize or offset the WebView after the first render. The
@@ -165,6 +175,61 @@ export function CaptureOverlay({
       setRegionRects((current) => current.length > 0 ? current : [visibleRect]);
     }
   }, [phase, selectionRect]);
+
+  useEffect(() => {
+    if (!captureSession || !monitorCapture || phase !== "selecting") return;
+    let cancelled = false;
+    let timer: number | undefined;
+    let unlistenUpdate = () => {};
+
+    listen<SelectionGeometry | null>("capture-selection-updated", ({ payload }) => {
+      if (globalDragStart.current) return;
+      const local = payload ? intersectGlobalSelection(payload, monitorCapture) : null;
+      setDraftRect(local ? {
+        x: local.x - monitorCapture.logical_x,
+        y: local.y - monitorCapture.logical_y,
+        width: local.width,
+        height: local.height,
+      } : null);
+    }).then((unlisten) => { unlistenUpdate = unlisten; });
+
+    const poll = async () => {
+      if (cancelled || !globalDragStart.current) return;
+      const point = await cursorPosition();
+      const selection = globalSelectionFromPhysicalCursor(
+        globalDragStart.current,
+        { x: point.x, y: point.y },
+        captureSession.monitors,
+      );
+      if (selection) await emit("capture-selection-updated", selection);
+      const pressed = await invoke<boolean>("is_primary_button_pressed");
+      if (!pressed) {
+        globalDragStart.current = null;
+        if (selection && selection.width >= 10 && selection.height >= 10) {
+          await emit("capture-selection-finalized", {
+            session_id: captureSession.session_id,
+            selection,
+          });
+        }
+        return;
+      }
+      timer = window.setTimeout(poll, 16);
+    };
+
+    const begin = async (event: MouseEvent) => {
+      if (event.button !== 0) return;
+      const point = await cursorPosition();
+      globalDragStart.current = { x: point.x, y: point.y };
+      void poll();
+    };
+    window.addEventListener("mousedown", begin, true);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      window.removeEventListener("mousedown", begin, true);
+      unlistenUpdate();
+    };
+  }, [captureSession, monitorCapture, phase]);
 
   const clamp = useCallback((x: number, y: number, w: number, h: number): SelectionGeometry => {
     w = Math.max(10, Math.min(w, screenW));

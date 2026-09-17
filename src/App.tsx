@@ -2,13 +2,14 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { flushSync } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { CaptureOverlay } from "./components/CaptureOverlay";
 import { SettingsPanel } from "./components/SettingsPanel";
 import type { Tool } from "./components/AnnotationToolbar";
-import { isCaptureGeometryReady, measureViewport } from "./geometry";
 import type { CaptureWindowGeometry } from "./geometry";
+import { monitorPhysicalRectToLogical } from "./capture-session";
+import type { CaptureSession, MonitorCapture } from "./capture-session";
 
 export interface Preset {
   id: string;
@@ -54,42 +55,58 @@ export interface AppSettings {
 type SessionPhase = "idle" | "selecting" | "annotating" | "settings";
 
 const isSettingsWindow = new URLSearchParams(window.location.search).get("window") === "settings";
+const overlayMatch = getCurrentWindow().label.match(/^capture-(\d+)$/);
+const overlayMonitorId = overlayMatch ? Number(overlayMatch[1]) : null;
+
+async function ensureCaptureOverlay(monitor: MonitorCapture) {
+  const label = `capture-${monitor.monitor_id}`;
+  const existing = await WebviewWindow.getByLabel(label);
+  if (existing) return existing;
+
+  const bounds = monitorPhysicalRectToLogical(monitor);
+  const overlay = new WebviewWindow(`capture-${monitor.monitor_id}`, {
+    url: `index.html?window=capture&monitor=${monitor.monitor_id}`,
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    decorations: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    visible: false,
+    focus: false,
+  });
+  await new Promise<void>((resolve, reject) => {
+    overlay.once("tauri://created", () => resolve());
+    overlay.once("tauri://error", ({ payload }) => reject(payload));
+  });
+  return overlay;
+}
+
+async function showCaptureOverlays(session: CaptureSession) {
+  await Promise.all(session.monitors.map(async (monitor) => {
+    const overlay = await ensureCaptureOverlay(monitor);
+    await overlay.emit("capture-session-started", session);
+    await overlay.show();
+  }));
+  await WebviewWindow.getByLabel(`capture-${session.monitors[0].monitor_id}`)
+    .then((window) => window?.setFocus());
+}
+
+async function hideCaptureOverlays(session: CaptureSession | null) {
+  if (!session) return;
+  await Promise.all(session.monitors.map(async (monitor) => {
+    await WebviewWindow.getByLabel(`capture-${monitor.monitor_id}`).then((window) => window?.hide());
+  }));
+}
 
 async function openSettingsWindow() {
   const existing = await WebviewWindow.getByLabel("settings");
   if (!existing) return;
   await existing.show();
   await existing.setFocus();
-}
-
-/**
- * Fits the overlay onto the captured monitor and returns the window rectangle
- * Windows really applied.
- *
- * The native side already re-applies the monitor rectangle after a DPI change,
- * but a WM_DPICHANGED notification can still land after its last write, and on
- * a mixed-DPI desktop that left the overlay covering only part of the second
- * monitor (its CSS viewport then no longer matched the screenshot, so every
- * cropped region was shifted). Verify the fit here as well: the overlay has to
- * cover the monitor and the WebView has to render at the monitor scale
- * (viewport * devicePixelRatio == window size) before the screenshot is mapped.
- */
-async function fitOverlayToCapture(
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-): Promise<CaptureWindowGeometry> {
-  let geometry = await invoke<CaptureWindowGeometry>("resize_window_to_capture", { x, y, width, height });
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const viewport = measureViewport();
-    if (isCaptureGeometryReady(geometry, viewport.width, viewport.height, window.devicePixelRatio)) {
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    geometry = await invoke<CaptureWindowGeometry>("resize_window_to_capture", { x, y, width, height });
-  }
-  return geometry;
 }
 
 function App() {
@@ -102,6 +119,8 @@ function App() {
   // on a mixed-DPI desktop.
   const [captureGeometry, setCaptureGeometry] = useState<CaptureWindowGeometry | null>(null);
   const [selectionRect, setSelectionRect] = useState<SelectionGeometry | null>(null);
+  const [captureSession, setCaptureSession] = useState<CaptureSession | null>(null);
+  const [overlayMonitor, setOverlayMonitor] = useState<MonitorCapture | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>("move");
   const [settings, setSettings] = useState<AppSettings>({
     shortcut_region: "PrintScreen",
@@ -132,9 +151,89 @@ function App() {
       .catch(console.error);
   }, []);
 
+  useEffect(() => {
+    if (overlayMonitorId === null) return;
+    let unlistenStart = () => {};
+    let unlistenCancel = () => {};
+    const applySession = (session: CaptureSession) => {
+      const monitor = session.monitors.find((item) => item.monitor_id === overlayMonitorId);
+      if (!monitor) return;
+      setCaptureSession(session);
+      setOverlayMonitor(monitor);
+      setFullScreenshot(monitor.image_data);
+      setCaptureSize({ width: monitor.physical_width, height: monitor.physical_height });
+      invoke<CaptureWindowGeometry>("resize_window_to_capture", {
+        x: monitor.physical_x,
+        y: monitor.physical_y,
+        width: monitor.physical_width,
+        height: monitor.physical_height,
+      }).then(setCaptureGeometry).catch(console.error);
+      setSelectionRect(null);
+      setPhase("selecting");
+    };
+
+    listen<CaptureSession>("capture-session-started", ({ payload }) => applySession(payload))
+      .then((unlisten) => { unlistenStart = unlisten; });
+
+    listen("capture-session-cancelled", () => {
+      setCaptureSession(null);
+      setPhase("idle");
+      getCurrentWindow().hide();
+    }).then((unlisten) => { unlistenCancel = unlisten; });
+    invoke<CaptureSession | null>("active_capture_session")
+      .then((session) => { if (session) applySession(session); })
+      .catch(console.error);
+
+    return () => {
+      unlistenStart();
+      unlistenCancel();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (overlayMonitorId !== null) return;
+    let unlistenComposite = () => {};
+    let unlistenFinalize = () => {};
+    listen<{ session_id: number; selection: SelectionGeometry }>(
+      "capture-selection-finalized",
+      async ({ payload }) => {
+        try {
+          const result = await invoke<CaptureResult>("finalize_capture_session", {
+            sessionId: payload.session_id,
+            selection: payload.selection,
+          });
+          const session = captureSessionRef.current;
+          await hideCaptureOverlays(session);
+          await emit("capture-composite-ready", { result, selection: payload.selection });
+        } catch (error) {
+          console.error("Capture session finalization failed:", error);
+        }
+      },
+    ).then((unlisten) => { unlistenFinalize = unlisten; });
+    listen<{ result: CaptureResult; selection: SelectionGeometry }>(
+      "capture-composite-ready",
+      ({ payload }) => {
+        flushSync(() => {
+          setFullScreenshot(payload.result.image_data);
+          setCaptureSize({ width: payload.result.width, height: payload.result.height });
+          setCaptureGeometry(null);
+          setSelectionRect({ x: 0, y: 0, width: payload.result.width, height: payload.result.height });
+          setPhase("annotating");
+        });
+        getCurrentWindow().show().then(() => getCurrentWindow().setFocus());
+      },
+    ).then((unlisten) => { unlistenComposite = unlisten; });
+    return () => {
+      unlistenComposite();
+      unlistenFinalize();
+    };
+  }, []);
+
   // Listen for Tauri events from Rust backend - register ONCE
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const captureSessionRef = useRef(captureSession);
+  captureSessionRef.current = captureSession;
 
   useEffect(() => {
     if (isSettingsWindow) return;
@@ -142,34 +241,10 @@ function App() {
 
     listen("region-capture", async () => {
       try {
-        const result = await invoke<CaptureResult>("capture_full_screen");
-        const previous = settingsRef.current.previous_selection;
-        // Fit the overlay to the captured monitor before React measures the
-        // viewport, and keep the geometry the native window really has so the
-        // screenshot can be mapped onto it without an offset.
-        const geometry = await fitOverlayToCapture(result.x, result.y, result.width, result.height);
-        // Commit the interactive UI while the transparent window is still
-        // hidden. Showing an empty transparent WebView can produce an opaque
-        // white surface on Windows, especially with multiple 4K displays.
-        flushSync(() => {
-          setFullScreenshot(result.image_data);
-          setCaptureSize({ width: result.width, height: result.height });
-          setCaptureGeometry(geometry);
-          setSelectionRect(previous);
-          setActiveTool("move");
-          // A remembered frame is already a valid selection: enter annotate
-          // immediately so the menu is never missing on the first capture.
-          setPhase(previous ? "annotating" : "selecting");
-        });
-        const window = getCurrentWindow();
-        // The capture overlay must sit above every other window while the
-        // session is open; the settings dialog below must not.
-        await window.setAlwaysOnTop(true);
-        // The hidden idle window is click-through. Disable that explicitly
-        // before showing it instead of waiting for the phase effect.
-        await invoke("set_ignore_cursor_events", { ignore: false });
-        await window.show();
-        await window.setFocus();
+        if (overlayMonitorId !== null) return;
+        const session = await invoke<CaptureSession>("begin_capture_session");
+        setCaptureSession(session);
+        await showCaptureOverlays(session);
       } catch (e) {
         console.error("Full screen capture failed:", e);
         await getCurrentWindow().hide();
@@ -215,7 +290,7 @@ function App() {
       setSelectionRect(null);
       getCurrentWindow().hide();
     },
-    [selectionRect, settings]
+    [selectionRect, settings, captureSession]
   );
 
   const handleSaveDialog = useCallback(
@@ -275,7 +350,13 @@ function App() {
     [selectionRect, settings]
   );
 
-  const handleCancel = useCallback(() => {
+  const handleCancel = useCallback(async () => {
+    if (captureSession) {
+      await invoke("cancel_capture_session", { sessionId: captureSession.session_id }).catch(console.error);
+      await hideCaptureOverlays(captureSession);
+      await emit("capture-session-cancelled", { session_id: captureSession.session_id });
+      setCaptureSession(null);
+    }
     setPhase("idle");
     setFullScreenshot(null);
     setCaptureGeometry(null);
@@ -320,6 +401,8 @@ function App() {
           fullScreenshot={fullScreenshot}
           captureSize={captureSize}
           captureGeometry={captureGeometry}
+          captureSession={captureSession}
+          monitorCapture={overlayMonitor}
           selectionRect={selectionRect}
           presets={settings.presets.filter((p) => p.enabled)}
           activeTool={activeTool}

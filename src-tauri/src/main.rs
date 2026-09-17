@@ -2,14 +2,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod capture;
-mod settings;
 mod clipboard;
+mod settings;
 mod shortcuts;
 
 use tauri::{
-    Emitter, Manager,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Emitter, Manager,
 };
 
 fn main() {
@@ -19,12 +19,18 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .manage(capture::CaptureSessions::default())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            capture::begin_capture_session,
+            capture::active_capture_session,
+            capture::is_primary_button_pressed,
+            capture::finalize_capture_session,
+            capture::cancel_capture_session,
             capture::capture_full_screen,
             capture::capture_region,
             capture::save_screenshot,
@@ -71,21 +77,31 @@ fn main() {
 }
 
 fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let capture_region = MenuItem::with_id(app, "capture_region", "Capture Region", true, None::<&str>)?;
-    let capture_fullscreen = MenuItem::with_id(app, "capture_fullscreen", "Capture Full Screen", true, None::<&str>)?;
+    let capture_region =
+        MenuItem::with_id(app, "capture_region", "Capture Region", true, None::<&str>)?;
+    let capture_fullscreen = MenuItem::with_id(
+        app,
+        "capture_fullscreen",
+        "Capture Full Screen",
+        true,
+        None::<&str>,
+    )?;
     let separator1 = PredefinedMenuItem::separator(app)?;
     let show_settings = MenuItem::with_id(app, "show_settings", "Settings", true, None::<&str>)?;
     let separator2 = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
-    let menu = Menu::with_items(app, &[
-        &capture_region,
-        &capture_fullscreen,
-        &separator1,
-        &show_settings,
-        &separator2,
-        &quit,
-    ])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &capture_region,
+            &capture_fullscreen,
+            &separator1,
+            &show_settings,
+            &separator2,
+            &quit,
+        ],
+    )?;
 
     let _tray = TrayIconBuilder::new()
         .icon(app.default_window_icon().cloned().unwrap())

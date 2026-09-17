@@ -23,12 +23,17 @@ describe("capability configuration", () => {
     }
   });
 
+  it("covers dynamically-created monitor overlays", () => {
+    expect(capability.windows).toContain("capture-*");
+  });
+
   it("grants the window commands the frontend invokes", () => {
     const required = [
       "core:window:allow-show",
       "core:window:allow-hide",
       "core:window:allow-set-focus",
       "core:window:allow-close",
+      "core:webview:allow-create-webview-window",
       "core:event:allow-listen",
       "core:event:allow-unlisten",
     ];

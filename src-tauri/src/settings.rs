@@ -273,8 +273,7 @@ pub fn load_settings() -> Result<AppSettings, String> {
     }
 
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let mut value: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| e.to_string())?;
+    let mut value: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
     let defaults = serde_json::to_value(AppSettings::default()).map_err(|e| e.to_string())?;
 
     // Merge defaults recursively so settings files from older versions remain
@@ -292,11 +291,15 @@ pub fn load_settings() -> Result<AppSettings, String> {
 }
 
 fn merge_json_defaults(value: &mut serde_json::Value, defaults: &serde_json::Value) {
-    if let (Some(value_object), Some(default_object)) = (value.as_object_mut(), defaults.as_object()) {
+    if let (Some(value_object), Some(default_object)) =
+        (value.as_object_mut(), defaults.as_object())
+    {
         for (key, default_value) in default_object {
             match value_object.get_mut(key) {
                 Some(value) => merge_json_defaults(value, default_value),
-                None => { value_object.insert(key.clone(), default_value.clone()); }
+                None => {
+                    value_object.insert(key.clone(), default_value.clone());
+                }
             }
         }
     }
@@ -344,7 +347,9 @@ pub fn set_auto_start(enabled: bool) -> Result<(), String> {
 
 #[tauri::command]
 pub fn set_ignore_cursor_events(window: tauri::WebviewWindow, ignore: bool) -> Result<(), String> {
-    window.set_ignore_cursor_events(ignore).map_err(|e| e.to_string())
+    window
+        .set_ignore_cursor_events(ignore)
+        .map_err(|e| e.to_string())
 }
 
 /// Physical desktop geometry of the overlay window once it was fitted onto a

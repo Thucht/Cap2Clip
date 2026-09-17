@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest";
 const rustMain = readFileSync(new URL("../src-tauri/src/main.rs", import.meta.url), "utf8");
 const rustShortcuts = readFileSync(new URL("../src-tauri/src/shortcuts.rs", import.meta.url), "utf8");
 const rustSettings = readFileSync(new URL("../src-tauri/src/settings.rs", import.meta.url), "utf8");
+const rustCapture = readFileSync(new URL("../src-tauri/src/capture.rs", import.meta.url), "utf8");
 const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
 const overlay = readFileSync(new URL("./components/CaptureOverlay.tsx", import.meta.url), "utf8");
+const captureSession = readFileSync(new URL("./capture-session.ts", import.meta.url), "utf8");
 const toolbar = readFileSync(new URL("./components/AnnotationToolbar.tsx", import.meta.url), "utf8");
 
 /**
@@ -14,6 +16,36 @@ const toolbar = readFileSync(new URL("./components/AnnotationToolbar.tsx", impor
  * input - produces an opaque white surface and a frozen selection UI.
  */
 describe("capture flow ordering", () => {
+  it("registers native all-monitor capture sessions", () => {
+    expect(rustMain).toContain("capture::CaptureSessions::default()");
+    expect(rustMain).toContain("capture::begin_capture_session");
+    expect(rustMain).toContain("capture::active_capture_session");
+    expect(rustMain).toContain("capture::finalize_capture_session");
+    expect(rustMain).toContain("capture::cancel_capture_session");
+    expect(rustCapture).toContain("Screen::all()");
+    expect(rustCapture).toContain("screens.sort_by_key");
+    expect(rustCapture).toContain("The capture session is stale");
+  });
+
+  it("orchestrates one overlay window per monitor", () => {
+    expect(app).toContain('new WebviewWindow(`capture-${monitor.monitor_id}`');
+    expect(app).toContain('invoke<CaptureSession>("begin_capture_session")');
+    expect(app).toContain('invoke<CaptureSession | null>("active_capture_session")');
+    expect(app).toContain('"capture-session-started"');
+    expect(app).toContain("resize_window_to_capture");
+    expect(app).toContain('"capture-selection-finalized"');
+    expect(app).toContain('"capture-composite-ready"');
+    expect(overlay).toContain("globalSelectionFromPhysicalCursor");
+    expect(overlay).toContain('invoke<boolean>("is_primary_button_pressed")');
+    expect(overlay).toContain('emit("capture-selection-updated"');
+    expect(captureSession).toContain("monitor.physical_x");
+    expect(captureSession).toContain("monitor.physical_y");
+  });
+
+  it("finalizes the shared selection once in the main coordinator", () => {
+    expect(app).toContain("if (overlayMonitorId !== null) return;");
+    expect(app).toContain('"capture-selection-finalized"');
+  });
   it("keeps the hotkey handler from showing the window", () => {
     // The native capture hotkeys live in shortcuts.rs now.
     expect(rustShortcuts).not.toContain("window.show()");
@@ -29,30 +61,18 @@ describe("capture flow ordering", () => {
     expect(rustShortcuts).not.toContain("PrintScreen\"");
   });
 
-  it("shows the overlay only after capture completed and input was enabled", () => {
+  it("shows monitor overlays only after capture completed", () => {
     const regionCaptureHandler = app.slice(
       app.indexOf('listen("region-capture"'),
       app.indexOf('listen("fullscreen-capture"'),
     );
 
-    const captureIndex = regionCaptureHandler.indexOf('invoke<CaptureResult>("capture_full_screen")');
-    const showIndex = regionCaptureHandler.indexOf("window.show()");
+    const captureIndex = regionCaptureHandler.indexOf('invoke<CaptureSession>("begin_capture_session")');
+    const showIndex = regionCaptureHandler.indexOf("showCaptureOverlays(session)");
     expect(captureIndex).toBeGreaterThanOrEqual(0);
     expect(showIndex).toBeGreaterThan(captureIndex);
 
-    // The selecting UI must be committed before the window becomes visible.
-    expect(regionCaptureHandler).toContain("flushSync");
-    const sizeIndex = regionCaptureHandler.indexOf(
-      'setCaptureSize({ width: result.width, height: result.height });',
-    );
-    expect(sizeIndex).toBeGreaterThanOrEqual(0);
-    expect(sizeIndex).toBeLessThan(showIndex);
-
-    const interactiveIndex = regionCaptureHandler.indexOf(
-      'invoke("set_ignore_cursor_events", { ignore: false })',
-    );
-    expect(interactiveIndex).toBeGreaterThanOrEqual(0);
-    expect(interactiveIndex).toBeLessThan(showIndex);
+    expect(regionCaptureHandler).toContain("setCaptureSession(session)");
   });
 
   it("seals each multi-region capture before moving to the next one", () => {
@@ -102,10 +122,9 @@ describe("overlay is fitted to the captured monitor", () => {
     expect(fit).toContain("window_height: client.height");
   });
 
-  it("maps the screenshot through the geometry the window really has", () => {
-    // App keeps the fitted geometry of the session and hands it to the overlay.
-    expect(app).toContain("const geometry = await fitOverlayToCapture(");
-    expect(app).toContain("setCaptureGeometry(geometry)");
+  it("maps each screenshot through its monitor-local viewport", () => {
+    expect(app).toContain("setCaptureGeometry(null)");
+    expect(app).toContain("setCaptureSize({ width: monitor.physical_width, height: monitor.physical_height })");
     expect(app).toContain("captureGeometry={captureGeometry}");
     expect(overlay).toContain("calculateFrameMapping(captureGeometry");
 
