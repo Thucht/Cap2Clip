@@ -1,15 +1,24 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { AnnotationCanvas } from "./AnnotationCanvas";
 import { AnnotationToolbar } from "./AnnotationToolbar";
 import type { Tool } from "./AnnotationToolbar";
 import type { Preset, SelectionGeometry } from "../App";
-import { calculateImageMapping, clampSelection, toImageRect, viewportPoint } from "../geometry";
+import {
+  calculateFrameMapping,
+  calculateImageMapping,
+  clampSelection,
+  measureViewport,
+  toImageRect,
+  viewportPoint,
+} from "../geometry";
+import type { CaptureWindowGeometry, ImageMapping } from "../geometry";
 import { matchesShortcut } from "../shortcuts";
 
 interface CaptureOverlayProps {
   phase: "selecting" | "annotating";
   fullScreenshot: string | null;
   captureSize: { width: number; height: number };
+  captureGeometry: CaptureWindowGeometry | null;
   selectionRect: SelectionGeometry | null;
   presets: Preset[];
   activeTool: Tool;
@@ -29,6 +38,7 @@ export function CaptureOverlay({
   phase,
   fullScreenshot,
   captureSize,
+  captureGeometry,
   selectionRect,
   presets,
   activeTool,
@@ -63,26 +73,57 @@ export function CaptureOverlay({
   const [capturedImages, setCapturedImages] = useState<(string | null)[]>([]);
   const canvasRef = useRef<any>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
-  // The overlay is always resized to the captured monitor before it is shown.
-  // window.innerWidth/innerHeight therefore stay in the same logical space as
-  // pointer events and selection geometry.
-  const screenW = window.innerWidth;
-  const screenH = window.innerHeight;
-  const imageMapping = calculateImageMapping(captureSize.width, captureSize.height, screenW, screenH);
-  // Fabric's canvas is rendered in CSS pixels. Exporting with the same
-  // physical-pixel multiplier used for the background keeps the saved image
-  // aligned with the selected rectangle.
-  const exportScale = imageMapping.scaleX;
+  // The overlay window is fitted to the captured monitor before it is shown,
+  // but a late WM_DPICHANGED / WebView2 rasterization change on a mixed-DPI
+  // desktop can resize or offset the WebView after the first render. The
+  // viewport therefore lives in state and is refreshed on every resize, so
+  // pointer coordinates, selection clamping and the screenshot mapping all
+  // stay in the same coordinate space.
+  const [viewport, setViewport] = useState(() => measureViewport());
+  const screenW = viewport.width;
+  const screenH = viewport.height;
+  // The screenshot is mapped through the rectangle the window really has. When
+  // the overlay covers the monitor this is the plain monitor scale; when it
+  // does not, the mapping still points at the pixels the user selected instead
+  // of scaling the crop against a size the window never had.
+  const imageMapping = useMemo(
+    () =>
+      captureGeometry
+        ? calculateFrameMapping(captureGeometry, screenW, screenH)
+        : calculateImageMapping(captureSize.width, captureSize.height, screenW, screenH),
+    [captureGeometry, captureSize.width, captureSize.height, screenW, screenH],
+  );
 
   useEffect(() => {
     // Keep the native window and WebView dimensions as the single source of
     // truth. React state here can lag one frame during a cross-monitor move.
-    const updateViewportSize = () => {
-      window.dispatchEvent(new Event("capture-viewport-resized"));
+    const refreshViewport = () => setViewport(measureViewport());
+    window.addEventListener("resize", refreshViewport);
+    window.addEventListener("capture-viewport-resized", refreshViewport);
+    const observer = new ResizeObserver(refreshViewport);
+    if (overlayRef.current) observer.observe(overlayRef.current);
+    refreshViewport();
+    return () => {
+      window.removeEventListener("resize", refreshViewport);
+      window.removeEventListener("capture-viewport-resized", refreshViewport);
+      observer.disconnect();
     };
-    window.addEventListener("resize", updateViewportSize);
-    return () => window.removeEventListener("resize", updateViewportSize);
   }, []);
+
+  // Export-time mapping. The rendered rectangle is measured again instead of
+  // reusing the render-time snapshot: a resize that lands between the last
+  // render and the click must not shift the saved crop. Fabric's canvas is
+  // rendered in CSS pixels, so exporting with the same physical-pixel
+  // multiplier used for the background keeps the saved image aligned with the
+  // selected rectangle.
+  const liveImageMapping = useCallback((): ImageMapping => {
+    const bounds = overlayRef.current?.getBoundingClientRect();
+    const width = bounds?.width || screenW;
+    const height = bounds?.height || screenH;
+    return captureGeometry
+      ? calculateFrameMapping(captureGeometry, width, height)
+      : calculateImageMapping(captureSize.width, captureSize.height, width, height);
+  }, [captureGeometry, captureSize.width, captureSize.height, screenW, screenH]);
 
   const pointerPoint = useCallback((event: React.MouseEvent) => {
     const bounds = overlayRef.current?.getBoundingClientRect();
@@ -231,7 +272,7 @@ export function CaptureOverlay({
     if (!rect || !canvas?.toDataURL || !canvas?.clearAnnotations) return;
     const objects = canvas.getCanvas?.()?.getObjects?.() ?? [];
     if (objects.length === 0) return;
-    const snapshot = canvas.toDataURL({ format: "png", multiplier: exportScale });
+    const snapshot = canvas.toDataURL({ format: "png", multiplier: liveImageMapping().scaleX });
     const index = regionRects.length - 1;
     setCapturedImages((current) => {
       const next = current.slice();
@@ -239,7 +280,7 @@ export function CaptureOverlay({
       return next;
     });
     canvas.clearAnnotations();
-  }, [rect, regionRects.length, exportScale]);
+  }, [rect, regionRects.length, liveImageMapping]);
 
   const handleMouseUp = useCallback(() => {
     if (isDragging && draftRect && draftRect.width > 5 && draftRect.height > 5) {
@@ -331,7 +372,7 @@ export function CaptureOverlay({
       }
       const image = new Image();
       image.onload = () => {
-        const imageRect = toImageRect(region, imageMapping);
+        const imageRect = toImageRect(region, liveImageMapping());
         const crop = document.createElement("canvas");
         crop.width = Math.max(1, Math.round(imageRect.width));
         crop.height = Math.max(1, Math.round(imageRect.height));
@@ -350,19 +391,20 @@ export function CaptureOverlay({
       image.onerror = () => reject(new Error("Could not load screenshot"));
       image.src = captureFrame || fullScreenshot;
     });
-  }, [captureFrame, fullScreenshot, imageMapping.scaleX, imageMapping.scaleY]);
+  }, [captureFrame, fullScreenshot, liveImageMapping]);
 
   const getExportImages = useCallback(async (): Promise<string[]> => {
+    const scale = liveImageMapping().scaleX;
     if (!multiRegion || regionRects.length <= 1) {
       if (!canvasRef.current?.toDataURL) return [];
-      return [canvasRef.current.toDataURL({ format: "png", multiplier: exportScale })];
+      return [canvasRef.current.toDataURL({ format: "png", multiplier: scale })];
     }
 
     const images: string[] = [];
     for (let index = 0; index < regionRects.length; index += 1) {
       const isActiveRegion = index === regionRects.length - 1;
       if (isActiveRegion && canvasRef.current?.toDataURL) {
-        images.push(canvasRef.current.toDataURL({ format: "png", multiplier: exportScale }));
+        images.push(canvasRef.current.toDataURL({ format: "png", multiplier: scale }));
       } else {
         // Sealed regions keep their composited snapshot when they had
         // annotations; annotation-free regions fall back to a plain crop.
@@ -370,14 +412,14 @@ export function CaptureOverlay({
       }
     }
     return images;
-  }, [multiRegion, regionRects, capturedImages, cropRegion, exportScale]);
+  }, [multiRegion, regionRects, capturedImages, cropRegion, liveImageMapping]);
 
   const handleCopyClick = useCallback(() => {
     if (canvasRef.current?.toDataURL) {
-      const dataUrl = canvasRef.current.toDataURL({ format: "png", multiplier: exportScale });
+      const dataUrl = canvasRef.current.toDataURL({ format: "png", multiplier: liveImageMapping().scaleX });
       onCopy(dataUrl);
     }
-  }, [exportScale, onCopy]);
+  }, [liveImageMapping, onCopy]);
 
   const handleSaveClick = useCallback(async () => {
     try {

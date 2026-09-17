@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const rustMain = readFileSync(new URL("../src-tauri/src/main.rs", import.meta.url), "utf8");
 const rustShortcuts = readFileSync(new URL("../src-tauri/src/shortcuts.rs", import.meta.url), "utf8");
+const rustSettings = readFileSync(new URL("../src-tauri/src/settings.rs", import.meta.url), "utf8");
 const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
 const overlay = readFileSync(new URL("./components/CaptureOverlay.tsx", import.meta.url), "utf8");
 const toolbar = readFileSync(new URL("./components/AnnotationToolbar.tsx", import.meta.url), "utf8");
@@ -69,5 +70,58 @@ describe("capture flow ordering", () => {
 
     // Undo history cannot carry annotations from one region to the next.
     expect(toolbar).toMatch(/undoStack\.current = \[\];\s*redoStack\.current = \[\];/);
+  });
+});
+
+/**
+ * On a mixed-DPI desktop Windows answers a cross-monitor move with
+ * WM_DPICHANGED, and the OS-suggested rectangle used to replace the
+ * monitor-sized overlay. The frontend then mapped selections against a window
+ * size the screenshot never had, so every cropped region of the second monitor
+ * was shifted/scaled.
+ */
+describe("overlay is fitted to the captured monitor", () => {
+  it("re-applies and verifies the monitor rectangle in the native window", () => {
+    const fit = rustSettings.slice(rustSettings.indexOf("pub async fn resize_window_to_capture"));
+
+    // The fit is repeated because the DPI notification is asynchronous, and the
+    // command has to be async so the main thread keeps pumping window messages.
+    expect(fit).toContain("apply_capture_rect(&window, x, y, width, height)");
+    expect(fit).toContain("client.covers(x, y, width, height)");
+    expect(fit).toContain("std::thread::sleep");
+
+    // The client area - not the frame - is what the WebView renders and what
+    // pointer coordinates are measured against.
+    expect(rustSettings).toContain("inner.x - outer.x");
+    expect(rustSettings).toContain("window.inner_position()");
+    expect(rustSettings).toContain("window.inner_size()");
+
+    // The geometry Windows really applied is reported back instead of being
+    // assumed by the caller.
+    expect(fit).toContain("window_width: client.width");
+    expect(fit).toContain("window_height: client.height");
+  });
+
+  it("maps the screenshot through the geometry the window really has", () => {
+    // App keeps the fitted geometry of the session and hands it to the overlay.
+    expect(app).toContain("const geometry = await fitOverlayToCapture(");
+    expect(app).toContain("setCaptureGeometry(geometry)");
+    expect(app).toContain("captureGeometry={captureGeometry}");
+    expect(overlay).toContain("calculateFrameMapping(captureGeometry");
+
+    // The viewport is measured into state and refreshed on resize/DPI changes
+    // instead of being frozen for the whole render.
+    expect(overlay).not.toContain("const screenW = window.innerWidth");
+    expect(overlay).toContain("const screenW = viewport.width");
+    expect(overlay).toContain('window.addEventListener("resize", refreshViewport)');
+    expect(overlay).toContain("new ResizeObserver(refreshViewport)");
+    // The old event was dispatched but nobody listened to it.
+    expect(overlay).not.toContain('dispatchEvent(new Event("capture-viewport-resized"))');
+
+    // Export re-measures the rendered rectangle so a late resize cannot shift
+    // the saved crop, and the canvas background goes through the same mapping.
+    expect(overlay).toContain("const bounds = overlayRef.current?.getBoundingClientRect()");
+    expect(overlay).toContain("toImageRect(region, liveImageMapping())");
+    expect(overlay).toContain("liveImageMapping().scaleX");
   });
 });

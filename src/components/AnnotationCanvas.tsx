@@ -3,6 +3,7 @@ import { Canvas, FabricImage } from "fabric";
 // Registers the custom `data` property that redaction strokes rely on.
 import "../fabric-config";
 import type { SelectionGeometry } from "../App";
+import { toImageRect } from "../geometry";
 import type { ImageMapping } from "../geometry";
 
 interface AnnotationCanvasProps {
@@ -76,7 +77,7 @@ export const AnnotationCanvas = forwardRef<any, AnnotationCanvasProps>(
       canvas.setDimensions({ width: rect.width, height: rect.height });
 
       updateBackground(canvas, imgRef.current, rect, imageMapping);
-    }, [rect, imageMapping.scaleX, imageMapping.scaleY]);
+    }, [rect, imageMapping.scaleX, imageMapping.scaleY, imageMapping.offsetX, imageMapping.offsetY]);
 
     return (
       <div className="annotation-canvas-wrapper">
@@ -165,20 +166,22 @@ function readLiveBounds(object: any): { left: number; top: number; width: number
 }
 
 function updateBackground(canvas: Canvas, img: HTMLImageElement, rect: SelectionGeometry, imageMapping: ImageMapping) {
+  // Crop the part of the full screenshot the selection points at. Going through
+  // `toImageRect` keeps the overlay window offset in the mapping, so the
+  // background stays aligned with the selection even when the overlay does not
+  // cover the whole monitor (mixed-DPI desktops).
+  const source = toImageRect(rect, imageMapping);
+
   // Create a temporary canvas to crop the region
   const tempCanvas = document.createElement("canvas");
-  const sourceX = rect.x * imageMapping.scaleX;
-  const sourceY = rect.y * imageMapping.scaleY;
-  const sourceWidth = rect.width * imageMapping.scaleX;
-  const sourceHeight = rect.height * imageMapping.scaleY;
-  tempCanvas.width = Math.max(1, Math.round(sourceWidth));
-  tempCanvas.height = Math.max(1, Math.round(sourceHeight));
+  tempCanvas.width = Math.max(1, Math.round(source.width));
+  tempCanvas.height = Math.max(1, Math.round(source.height));
   const ctx = tempCanvas.getContext("2d");
   if (!ctx) return;
 
   ctx.drawImage(
     img,
-    sourceX, sourceY, sourceWidth, sourceHeight,
+    source.x, source.y, source.width, source.height,
     0, 0, tempCanvas.width, tempCanvas.height
   );
 

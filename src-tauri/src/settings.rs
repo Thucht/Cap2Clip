@@ -347,26 +347,122 @@ pub fn set_ignore_cursor_events(window: tauri::WebviewWindow, ignore: bool) -> R
     window.set_ignore_cursor_events(ignore).map_err(|e| e.to_string())
 }
 
+/// Physical desktop geometry of the overlay window once it was fitted onto a
+/// capture. The frontend uses it to map CSS viewport coordinates to pixels of
+/// the screenshot, so it must describe the window as Windows really reports it
+/// instead of the rectangle we asked for.
+#[derive(Debug, Clone, Serialize)]
+pub struct CaptureWindowGeometry {
+    pub monitor_x: i32,
+    pub monitor_y: i32,
+    pub monitor_width: u32,
+    pub monitor_height: u32,
+    pub window_x: i32,
+    pub window_y: i32,
+    pub window_width: u32,
+    pub window_height: u32,
+    pub scale_factor: f64,
+}
+
+/// Client-area rectangle of a window in physical desktop pixels.
+#[derive(Debug, Clone, Copy)]
+struct ClientRect {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+impl ClientRect {
+    fn covers(&self, x: i32, y: i32, width: u32, height: u32) -> bool {
+        self.x == x && self.y == y && self.width == width && self.height == height
+    }
+}
+
+/// Fit the overlay onto the captured monitor and report what the window really is.
 #[tauri::command]
-pub fn resize_window_to_capture(
+pub async fn resize_window_to_capture(
     window: tauri::WebviewWindow,
     x: i32,
     y: i32,
     width: u32,
     height: u32,
-) -> Result<(), String> {
-    use tauri::{PhysicalPosition, PhysicalSize};
-
+) -> Result<CaptureWindowGeometry, String> {
     // `x/y/width/height` already come from the screenshot backend as physical
     // desktop pixels of the target monitor. `window.scale_factor()` returns the
     // scale of whichever monitor the window currently sits on, which is wrong
     // on mixed-DPI desktops and shifts the overlay by (scale-1)*coordinate.
     // Use Physical* everywhere so no DPI math is involved.
+    let mut client = apply_capture_rect(&window, x, y, width, height)?;
+
+    // Moving the overlay onto a monitor with a different scale factor makes
+    // Windows send WM_DPICHANGED, and tao answers that notification by applying
+    // the OS-suggested rectangle - which replaces the size that was requested
+    // here a moment earlier. That is what left the overlay covering only part of
+    // the second monitor. Because that notification is posted (and therefore
+    // handled after the write), the fit is re-applied and re-read until the
+    // reported client rectangle matches the monitor. This command is async on
+    // purpose: the main thread keeps running its message loop (and therefore
+    // processes WM_DPICHANGED) while the retry waits.
+    for _ in 0..4 {
+        if client.covers(x, y, width, height) {
+            break;
+        }
+        client = apply_capture_rect(&window, x, y, width, height)?;
+    }
+
+    Ok(CaptureWindowGeometry {
+        monitor_x: x,
+        monitor_y: y,
+        monitor_width: width,
+        monitor_height: height,
+        window_x: client.x,
+        window_y: client.y,
+        window_width: client.width,
+        window_height: client.height,
+        scale_factor: window.scale_factor().unwrap_or(1.0),
+    })
+}
+
+/// Move the window so its *client area* starts at the monitor origin and covers
+/// the whole monitor, then report the rectangle Windows actually applied.
+fn apply_capture_rect(
+    window: &tauri::WebviewWindow,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<ClientRect, String> {
+    use tauri::{PhysicalPosition, PhysicalSize};
+
+    // Anything the frame adds around the window (DWM frame, decorations, DPI
+    // rounding) shifts the client area, and the client area is what the WebView
+    // renders and what pointer coordinates are measured against. Compensate so
+    // the screenshot always starts exactly at the monitor origin.
+    let (offset_x, offset_y) = match (window.outer_position(), window.inner_position()) {
+        (Ok(outer), Ok(inner)) => (inner.x - outer.x, inner.y - outer.y),
+        _ => (0, 0),
+    };
+
     window
-        .set_position(PhysicalPosition::new(x, y))
+        .set_position(PhysicalPosition::new(x - offset_x, y - offset_y))
         .map_err(|e| e.to_string())?;
     window
-        .set_size(PhysicalSize::new(width, height))
+        .set_size(PhysicalSize::new(width.max(1), height.max(1)))
         .map_err(|e| e.to_string())?;
-    Ok(())
+
+    // The cross-monitor DPI notification is posted to the window's message
+    // queue, so it is processed after `set_position` returned. Give the main
+    // thread that moment before reading the rectangle back, otherwise the read
+    // describes the window as it was before Windows rescaled it.
+    std::thread::sleep(std::time::Duration::from_millis(40));
+
+    let position = window.inner_position().map_err(|e| e.to_string())?;
+    let size = window.inner_size().map_err(|e| e.to_string())?;
+    Ok(ClientRect {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+    })
 }

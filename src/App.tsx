@@ -7,6 +7,8 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { CaptureOverlay } from "./components/CaptureOverlay";
 import { SettingsPanel } from "./components/SettingsPanel";
 import type { Tool } from "./components/AnnotationToolbar";
+import { isCaptureGeometryReady, measureViewport } from "./geometry";
+import type { CaptureWindowGeometry } from "./geometry";
 
 export interface Preset {
   id: string;
@@ -60,10 +62,45 @@ async function openSettingsWindow() {
   await existing.setFocus();
 }
 
+/**
+ * Fits the overlay onto the captured monitor and returns the window rectangle
+ * Windows really applied.
+ *
+ * The native side already re-applies the monitor rectangle after a DPI change,
+ * but a WM_DPICHANGED notification can still land after its last write, and on
+ * a mixed-DPI desktop that left the overlay covering only part of the second
+ * monitor (its CSS viewport then no longer matched the screenshot, so every
+ * cropped region was shifted). Verify the fit here as well: the overlay has to
+ * cover the monitor and the WebView has to render at the monitor scale
+ * (viewport * devicePixelRatio == window size) before the screenshot is mapped.
+ */
+async function fitOverlayToCapture(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): Promise<CaptureWindowGeometry> {
+  let geometry = await invoke<CaptureWindowGeometry>("resize_window_to_capture", { x, y, width, height });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const viewport = measureViewport();
+    if (isCaptureGeometryReady(geometry, viewport.width, viewport.height, window.devicePixelRatio)) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    geometry = await invoke<CaptureWindowGeometry>("resize_window_to_capture", { x, y, width, height });
+  }
+  return geometry;
+}
+
 function App() {
   const [phase, setPhase] = useState<SessionPhase>("idle");
   const [fullScreenshot, setFullScreenshot] = useState<string | null>(null);
   const [captureSize, setCaptureSize] = useState({ width: 1, height: 1 });
+  // Physical rectangle the native overlay window really has for this session.
+  // It is the source of truth for mapping CSS coordinates onto the screenshot,
+  // because the requested monitor rectangle is not always what Windows keeps
+  // on a mixed-DPI desktop.
+  const [captureGeometry, setCaptureGeometry] = useState<CaptureWindowGeometry | null>(null);
   const [selectionRect, setSelectionRect] = useState<SelectionGeometry | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>("move");
   const [settings, setSettings] = useState<AppSettings>({
@@ -107,22 +144,17 @@ function App() {
       try {
         const result = await invoke<CaptureResult>("capture_full_screen");
         const previous = settingsRef.current.previous_selection;
-        await invoke("resize_window_to_capture", {
-          x: result.x,
-          y: result.y,
-          width: result.width,
-          height: result.height,
-        });
-        // Let WebView2 apply the new monitor/DPI layout before React measures
-        // the overlay. Otherwise the first pointer event can use the previous
-        // monitor's viewport dimensions.
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        // Fit the overlay to the captured monitor before React measures the
+        // viewport, and keep the geometry the native window really has so the
+        // screenshot can be mapped onto it without an offset.
+        const geometry = await fitOverlayToCapture(result.x, result.y, result.width, result.height);
         // Commit the interactive UI while the transparent window is still
         // hidden. Showing an empty transparent WebView can produce an opaque
         // white surface on Windows, especially with multiple 4K displays.
         flushSync(() => {
           setFullScreenshot(result.image_data);
           setCaptureSize({ width: result.width, height: result.height });
+          setCaptureGeometry(geometry);
           setSelectionRect(previous);
           setActiveTool("move");
           // A remembered frame is already a valid selection: enter annotate
@@ -179,6 +211,7 @@ function App() {
       }
       setPhase("idle");
       setFullScreenshot(null);
+      setCaptureGeometry(null);
       setSelectionRect(null);
       getCurrentWindow().hide();
     },
@@ -203,6 +236,7 @@ function App() {
         await invoke("save_settings", { settings: updated });
         setPhase("idle");
         setFullScreenshot(null);
+        setCaptureGeometry(null);
         setSelectionRect(null);
         getCurrentWindow().hide();
       } catch (e) {
@@ -231,6 +265,7 @@ function App() {
         await invoke("save_settings", { settings: updated });
         setPhase("idle");
         setFullScreenshot(null);
+        setCaptureGeometry(null);
         setSelectionRect(null);
         getCurrentWindow().hide();
       } catch (e) {
@@ -243,6 +278,7 @@ function App() {
   const handleCancel = useCallback(() => {
     setPhase("idle");
     setFullScreenshot(null);
+    setCaptureGeometry(null);
     setSelectionRect(null);
     getCurrentWindow().hide();
   }, []);
@@ -283,6 +319,7 @@ function App() {
           phase={phase}
           fullScreenshot={fullScreenshot}
           captureSize={captureSize}
+          captureGeometry={captureGeometry}
           selectionRect={selectionRect}
           presets={settings.presets.filter((p) => p.enabled)}
           activeTool={activeTool}

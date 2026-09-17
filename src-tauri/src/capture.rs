@@ -8,9 +8,10 @@ use tauri_plugin_dialog::DialogExt;
 #[derive(Debug, Serialize)]
 pub struct CaptureResult {
     pub image_data: String, // base64 PNG
-    // Physical pixel dimensions of image_data. The overlay is also resized
-    // with these physical dimensions, then the frontend maps CSS coordinates
-    // to this image using the actual WebView viewport size.
+    // Physical pixel dimensions of image_data. `resize_window_to_capture`
+    // reports the rectangle the overlay window really got, and the frontend
+    // maps CSS coordinates onto this image through that rectangle (monitor
+    // scale plus window offset), so mixed-DPI desktops stay aligned.
     pub width: u32,
     pub height: u32,
     pub x: i32,

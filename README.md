@@ -219,6 +219,24 @@ Settings are stored in:
 - System tray left-click behavior varies by OS
 - Transparent window requires WebView2 runtime (Windows)
 
+### Multi-monitor and mixed-DPI behavior
+
+The overlay is a normal (non-fullscreen) window fitted onto the captured
+monitor in **physical desktop pixels**, so the following must stay true:
+
+- `resize_window_to_capture` moves/resizes the **client area** onto the monitor
+  and reports the rectangle Windows really applied. Moving a window across
+  monitors with different scale factors makes Windows send `WM_DPICHANGED`, and
+  the OS-suggested rectangle can replace the requested size, so the fit is
+  verified and re-applied until it matches.
+- The screenshot is mapped onto the overlay with `calculateFrameMapping`
+  (`geometry.ts`): scale = window/WebView size, offset = window origin − monitor
+  origin. Never map with `capture.width / window.innerWidth` alone, because that
+  assumes the window covers the whole monitor.
+- The viewport is measured live (`measureViewport`) and refreshed on resize
+  instead of being cached for a render: a DPI change can resize the WebView
+  after React has already rendered.
+
 ## Contributing
 
 Contributions welcome! Please open an issue first to discuss what you'd like to change.
