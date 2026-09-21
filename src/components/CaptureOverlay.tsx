@@ -66,6 +66,7 @@ export function CaptureOverlay({
   const [isDragging, setIsDragging] = useState(false);
   const [draftRect, setDraftRect] = useState<SelectionGeometry | null>(null);
   const [startPoint, setStartPoint] = useState({ x: 0, y: 0 });
+  const [cursorPoint, setCursorPoint] = useState<{ x: number; y: number } | null>(null);
   const [isResizing, setIsResizing] = useState<string | null>(null);
   const [isMoving, setIsMoving] = useState(false);
   const [resizeStart, setResizeStart] = useState({ x: 0, y: 0, rx: 0, ry: 0, rw: 0, rh: 0 });
@@ -277,14 +278,19 @@ export function CaptureOverlay({
     }
 
     e.preventDefault();
+    setCursorPoint(point);
     setIsDragging(true);
     setStartPoint(point);
     setDraftRect({ x: point.x, y: point.y, width: 0, height: 0 });
   }, [phase, rect, pointerPoint]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!rect) return;
     const point = pointerPoint(e);
+    setCursorPoint(point);
+
+    // There is no committed rectangle during the first drag. Keep handling
+    // movement so that the initial selection draft grows with the cursor.
+    if (!rect && !isDragging) return;
 
     // Resize
     if (isResizing) {
@@ -314,7 +320,7 @@ export function CaptureOverlay({
       if (nw >= 10 && nh >= 10) setActiveRect(clamp(nx, ny, nw, nh));
     }
     // Move
-    else if (isMoving) {
+    else if (isMoving && rect) {
       const dx = point.x - moveStart.x;
       const dy = point.y - moveStart.y;
       setActiveRect(clamp(moveStart.rx + dx, moveStart.ry + dy, rect.width, rect.height));
@@ -602,7 +608,10 @@ export function CaptureOverlay({
           {renderBackdrops()}
 
           {/* Hint text */}
-          <div className="capture-hint">
+          <div
+            className={`capture-hint ${!rect ? "capture-hint-cursor" : ""}`}
+            style={!rect && cursorPoint ? { left: cursorPoint.x, top: cursorPoint.y } : undefined}
+          >
             {!rect || rect.width < 5 ? (
               "Click and drag to select region"
             ) : (

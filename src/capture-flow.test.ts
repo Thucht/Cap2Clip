@@ -10,6 +10,19 @@ const overlay = readFileSync(new URL("./components/CaptureOverlay.tsx", import.m
 const captureSession = readFileSync(new URL("./capture-session.ts", import.meta.url), "utf8");
 const toolbar = readFileSync(new URL("./components/AnnotationToolbar.tsx", import.meta.url), "utf8");
 
+describe("capture selection interaction", () => {
+  it("tracks the initial drag before a committed selection exists", () => {
+    const mouseMoveStart = overlay.indexOf("const handleMouseMove");
+    const mouseMoveEnd = overlay.indexOf("const commitActiveRegion", mouseMoveStart);
+    const mouseMove = overlay.slice(mouseMoveStart, mouseMoveEnd);
+
+    expect(mouseMove).toContain("setCursorPoint(point)");
+    expect(mouseMove).toContain("if (!rect && !isDragging) return");
+    expect(mouseMove).not.toContain("if (!rect) return");
+    expect(overlay).toContain("left: cursorPoint.x, top: cursorPoint.y");
+  });
+});
+
 /**
  * The overlay window is transparent and click-through while idle. Showing it
  * before the desktop screenshot is taken - or before it can receive pointer

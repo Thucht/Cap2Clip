@@ -54,6 +54,10 @@ html, body, #root {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
 }
 
+.capture-hint.capture-hint-cursor {
+  transform: translate(18px, 18px);
+}
+
 /* ==================== PRESET BAR (selecting phase) ==================== */
 .preset-bar {
   position: fixed;
