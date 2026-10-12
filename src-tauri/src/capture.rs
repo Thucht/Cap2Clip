@@ -264,10 +264,35 @@ pub fn begin_capture_session(
         )
     });
 
+    // Desktop Duplication is the primary capture path. It hands out the frame
+    // the display engine actually produced, so hardware accelerated surfaces
+    // (Chrome, video players, GPU wallpapers) are captured instead of coming
+    // back as a black rectangle the way a desktop `BitBlt` reports them. This
+    // is the same primary/fallback split Lightshot ships in
+    // `DXGIODScreenshot.dll`. An empty list simply means every monitor takes
+    // the GDI path below.
+    #[cfg(target_os = "windows")]
+    let dxgi_outputs = crate::dxgi_capture::capture_outputs();
+
     let mut captured = Vec::with_capacity(screens.len());
     for screen in screens {
         let info = screen.display_info;
+
+        // Outputs are matched by desktop-space origin, which is exactly the
+        // coordinate space `EnumDisplayMonitors` reported `info.x`/`info.y` in,
+        // so a mixed-DPI or multi-adapter desktop still lines up with the
+        // overlay geometry.
+        #[cfg(target_os = "windows")]
+        let image = match dxgi_outputs
+            .iter()
+            .find(|output| output.x == info.x && output.y == info.y)
+        {
+            Some(output) => output.image.clone(),
+            None => screen.capture().map_err(|error| error.to_string())?,
+        };
+        #[cfg(not(target_os = "windows"))]
         let image = screen.capture().map_err(|error| error.to_string())?;
+
         let scale = f64::from(info.scale_factor);
         if !scale.is_finite() || scale <= 0.0 {
             return Err(format!(

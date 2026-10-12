@@ -33,6 +33,9 @@ describe("capability configuration", () => {
       "core:window:allow-hide",
       "core:window:allow-set-focus",
       "core:window:allow-close",
+      // The per-monitor overlays are torn down after each capture; hiding them
+      // would leak one WebView (and its full-desktop frame) per monitor.
+      "core:window:allow-destroy",
       "core:webview:allow-create-webview-window",
       "core:event:allow-listen",
       "core:event:allow-unlisten",

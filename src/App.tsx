@@ -95,6 +95,25 @@ async function showCaptureOverlays(session: CaptureSession) {
     .then((window) => window?.setFocus());
 }
 
+/**
+ * Tear the per-monitor overlays down instead of only hiding them.
+ *
+ * Hiding leaves the WebView alive with the full-desktop base64 screenshot still
+ * in React state, so every capture round leaks one WebView process plus one
+ * decoded frame per monitor. Destroying is safe because the next capture
+ * recreates the window from `ensureCaptureOverlay`.
+ */
+async function destroyCaptureOverlays(session: CaptureSession | null) {
+  if (!session) return;
+  await Promise.all(session.monitors.map(async (monitor) => {
+    try {
+      await WebviewWindow.getByLabel(`capture-${monitor.monitor_id}`).then((window) => window?.destroy());
+    } catch (error) {
+      console.error("Could not destroy capture overlay:", error);
+    }
+  }));
+}
+
 async function hideCaptureOverlays(session: CaptureSession | null) {
   if (!session) return;
   await Promise.all(session.monitors.map(async (monitor) => {
@@ -204,7 +223,15 @@ function App() {
           });
           const session = captureSessionRef.current;
           await hideCaptureOverlays(session);
+          // The Rust session is consumed by finalize_capture_session, so the
+          // coordinator must drop it too - otherwise a later Cancel would try
+          // to release a session that no longer exists.
+          captureSessionRef.current = null;
+          setCaptureSession(null);
           await emit("capture-composite-ready", { result, selection: payload.selection });
+          // Tear the overlays down only after the editor is on screen, so
+          // closing the WebViews never delays the transition the user sees.
+          void destroyCaptureOverlays(session);
         } catch (error) {
           console.error("Capture session finalization failed:", error);
         }
@@ -230,8 +257,6 @@ function App() {
   }, []);
 
   // Listen for Tauri events from Rust backend - register ONCE
-  const settingsRef = useRef(settings);
-  settingsRef.current = settings;
   const captureSessionRef = useRef(captureSession);
   captureSessionRef.current = captureSession;
 
@@ -243,6 +268,7 @@ function App() {
       try {
         if (overlayMonitorId !== null) return;
         const session = await invoke<CaptureSession>("begin_capture_session");
+        captureSessionRef.current = session;
         setCaptureSession(session);
         await showCaptureOverlays(session);
       } catch (e) {
@@ -351,10 +377,16 @@ function App() {
   );
 
   const handleCancel = useCallback(async () => {
-    if (captureSession) {
-      await invoke("cancel_capture_session", { sessionId: captureSession.session_id }).catch(console.error);
-      await hideCaptureOverlays(captureSession);
-      await emit("capture-session-cancelled", { session_id: captureSession.session_id });
+    // Read the live session through the ref instead of the state value: this
+    // callback is registered once, so closing over `captureSession` would keep
+    // the initial `null` forever and Escape would neither release the Rust
+    // session nor take the per-monitor overlays off the screen.
+    const session = captureSessionRef.current;
+    if (session) {
+      await invoke("cancel_capture_session", { sessionId: session.session_id }).catch(console.error);
+      await destroyCaptureOverlays(session);
+      await emit("capture-session-cancelled", { session_id: session.session_id });
+      captureSessionRef.current = null;
       setCaptureSession(null);
     }
     setPhase("idle");

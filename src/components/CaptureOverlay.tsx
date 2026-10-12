@@ -354,6 +354,15 @@ export function CaptureOverlay({
   }, [rect, regionRects.length, liveImageMapping]);
 
   const handleMouseUp = useCallback(() => {
+    // The cross-monitor cursor poll owns the gesture while it is running: it
+    // reports the selection across monitor borders and emits the single
+    // finalization the coordinator acts on. Sealing the local draft as well
+    // would publish a second, different rectangle for the same drag.
+    if (globalDragStart.current) {
+      setDraftRect(null);
+      setIsDragging(false);
+      return;
+    }
     if (isDragging && draftRect && draftRect.width > 5 && draftRect.height > 5) {
       if (phase === "annotating" && multiRegion) {
         commitActiveRegion();
@@ -371,6 +380,19 @@ export function CaptureOverlay({
     setIsResizing(null);
     setIsMoving(false);
   }, [isDragging, draftRect, isResizing, isMoving, rect, phase, multiRegion, commitActiveRegion, onEnterAnnotate]);
+
+  /**
+   * Leaving the overlay is not the end of a drag.
+   *
+   * Each overlay only covers its own monitor, so dragging towards a second
+   * screen fires `mouseleave` while the gesture is still going. The local draft
+   * is dropped (this window will never receive another mousemove for it) and the
+   * global cursor poll keeps tracking the drag, which also finalizes it.
+   */
+  const handleMouseLeave = useCallback(() => {
+    setIsDragging(false);
+    setDraftRect(null);
+  }, []);
 
   // Resize handle mouse down - works in BOTH phases
   const handleResizeStart = useCallback((handle: string, e: React.MouseEvent) => {
@@ -597,7 +619,7 @@ export function CaptureOverlay({
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
+      onMouseLeave={handleMouseLeave}
     >
       {/* ======== SELECTION DRAFT ======== */}
       {renderSelectionDraft()}

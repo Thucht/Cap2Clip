@@ -28,6 +28,18 @@ time = "0.3"
 winreg = "0.55"
 windows-sys = { version = "0.59", features = ["Win32_UI_Input_KeyboardAndMouse"] }
 
+[target.'cfg(windows)'.dependencies]
+# DXGI Desktop Duplication. This is the capture path Lightshot uses and the
+# only one that sees hardware-accelerated surfaces; GDI stays as the fallback.
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Gdi",
+] }
+
 [profile.release]
 strip = true
 lto = true

@@ -6,6 +6,9 @@ mod clipboard;
 mod settings;
 mod shortcuts;
 
+#[cfg(target_os = "windows")]
+mod dxgi_capture;
+
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
