@@ -91,12 +91,20 @@ function exportCanvasWithBlur(canvas: Canvas, opts: any): string {
   const blurObjects = canvas.getObjects().filter((object: any) => object.data?.kind === "blur");
   if (blurObjects.length === 0) return canvas.toDataURL(opts);
 
-  const multiplier = opts.multiplier || 1;
-  const output = document.createElement("canvas");
-  output.width = canvas.getWidth() * multiplier;
-  output.height = canvas.getHeight() * multiplier;
-  const ctx = output.getContext("2d");
-  if (!ctx) return canvas.toDataURL(opts);
+const multiplier = opts.multiplier || 1;
+    const format = opts.format === "jpeg" ? "jpeg" : "png";
+    const quality = opts.quality || 1;
+    const mime = format === "jpeg" ? "image/jpeg" : "image/png";
+    const output = document.createElement("canvas");
+    output.width = canvas.getWidth() * multiplier;
+    output.height = canvas.getHeight() * multiplier;
+    const ctx = output.getContext("2d");
+    if (!ctx) return canvas.toDataURL(opts);
+    // JPEG has no alpha channel, so an unflattened frame would encode as black.
+    if (format === "jpeg") {
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, output.width, output.height);
+    }
 
   // Hide blur paths only while rendering the clean base frame. The base must
   // include the cropped screenshot background, then each blur patch is drawn
@@ -152,10 +160,10 @@ function exportCanvasWithBlur(canvas: Canvas, opts: any): string {
   // Restore all object visibility and leave the composited pixels intact.
   // Regular objects are already included in the base Fabric frame; blur paths
   // stay hidden there and are represented by their processed patches.
-  blurObjects.forEach((object: any, index: number) => { object.visible = previousVisibility[index]; });
-  canvas.renderAll();
-  return output.toDataURL("image/png");
-}
+blurObjects.forEach((object: any, index: number) => { object.visible = previousVisibility[index]; });
+    canvas.renderAll();
+    return output.toDataURL(mime, quality);
+  }
 
 function readLiveBounds(object: any): { left: number; top: number; width: number; height: number } {
   if (typeof object.getBoundingRect === "function") {

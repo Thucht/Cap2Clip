@@ -1,3 +1,12 @@
+//! Capture session.
+//!
+//! The per-monitor frames stay on the Rust side. They used to be PNG-encoded and
+//! shipped to every overlay window, but the selection overlay is transparent and
+//! never draws them - it dims the live desktop instead. Encoding two 3840x2160
+//! frames and pushing ~90 MB of base64 over IPC before the overlay could appear
+//! was what made the PrintScreen hotkey feel like it lagged by seconds. Only the
+//! finished selection is encoded now, and only once.
+
 use base64::Engine;
 use screenshots::Screen;
 use serde::{Deserialize, Serialize};
@@ -35,7 +44,6 @@ pub struct MonitorCapture {
     pub physical_width: u32,
     pub physical_height: u32,
     pub scale_factor: f64,
-    pub image_data: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,7 +66,119 @@ pub struct SelectionGeometry {
 
 struct CapturedMonitor {
     metadata: MonitorCapture,
-    image: screenshots::image::RgbaImage,
+    /// Filled in by `finalize_capture_session`, once per monitor it actually
+    /// needs, and only for the monitors the selection touches.
+    image: Option<screenshots::image::RgbaImage>,
+}
+
+/// Monitors in a stable order, so a session and a later capture agree on which
+/// index belongs to which screen.
+fn sorted_screens() -> Result<Vec<Screen>, String> {
+    let mut screens = Screen::all().map_err(|error| error.to_string())?;
+    if screens.is_empty() {
+        return Err("No monitors are available for capture".into());
+    }
+    screens.sort_by_key(|screen| {
+        (
+            screen.display_info.x,
+            screen.display_info.y,
+            screen.display_info.id,
+        )
+    });
+    Ok(screens)
+}
+
+/// Read one monitor's pixels, DXGI first and GDI as the fallback.
+///
+/// Desktop Duplication is the primary capture path. It hands out the frame the
+/// display engine actually produced, so hardware accelerated surfaces (Chrome,
+/// video players, GPU wallpapers) are captured instead of coming back as a black
+/// rectangle the way a desktop `BitBlt` reports them. This is the same
+/// primary/fallback split Lightshot ships in `DXGIODScreenshot.dll`: an output
+/// that duplication refuses simply falls through to `screen.capture()`.
+#[cfg(target_os = "windows")]
+fn capture_monitor_pixels(
+    screen: &Screen,
+    dxgi_outputs: &[crate::dxgi_capture::DuplicatedOutput],
+) -> Result<screenshots::image::RgbaImage, String> {
+    let info = screen.display_info;
+    // Outputs are matched by desktop-space origin, which is exactly the
+    // coordinate space `EnumDisplayMonitors` reported `info.x`/`info.y` in, so a
+    // mixed-DPI or multi-adapter desktop still lines up with the overlay
+    // geometry.
+    let mut image = match dxgi_outputs
+        .iter()
+        .find(|output| output.x == info.x && output.y == info.y)
+    {
+        Some(output) => output.image.clone(),
+        None => screen.capture().map_err(|error| error.to_string())?,
+    };
+
+    // Lightshot parity: the pointer is never part of a desktop capture, so it is
+    // composited afterwards when the user asked for it. The cursor belongs to the
+    // desktop that owns it, which is the monitor it is physically on.
+    if let Ok(settings) = crate::settings::load_settings() {
+        if settings.capture_cursor {
+            if let Some((cursor_x, cursor_y)) = crate::cursor::cursor_position() {
+                let inside = cursor_x >= info.x
+                    && cursor_y >= info.y
+                    && cursor_x < info.x + info.width as i32
+                    && cursor_y < info.y + info.height as i32;
+                if inside {
+                    crate::cursor::draw_cursor(
+                        &mut image,
+                        (info.x, info.y),
+                        (cursor_x, cursor_y),
+                        f64::from(info.scale_factor),
+                    );
+                }
+            }
+        }
+    }
+    Ok(image)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn capture_monitor_pixels(
+    screen: &Screen,
+    _dxgi_outputs: &(),
+) -> Result<screenshots::image::RgbaImage, String> {
+    screen.capture().map_err(|error| error.to_string())
+}
+
+/// Read every monitor the composite plan touches, once each.
+fn capture_planned_monitors(
+    monitors: &mut [CapturedMonitor],
+    plan: &CompositePlan,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let dxgi_outputs = crate::dxgi_capture::capture_outputs();
+    #[cfg(not(target_os = "windows"))]
+    let dxgi_outputs: () = ();
+
+    let screens = sorted_screens()?;
+    let mut wanted: Vec<usize> = plan.crops.iter().map(|crop| crop.monitor_index).collect();
+    wanted.sort_unstable();
+    wanted.dedup();
+
+    for index in wanted {
+        let Some(monitor) = monitors.get_mut(index) else {
+            return Err("Composite plan referenced an unavailable monitor".into());
+        };
+        if monitor.image.is_some() {
+            continue;
+        }
+        let screen = screens
+            .iter()
+            .find(|screen| screen.display_info.id == monitor.metadata.monitor_id)
+            .ok_or_else(|| format!("Monitor {} disappeared", monitor.metadata.monitor_id))?;
+        #[cfg(target_os = "windows")]
+        let image = capture_monitor_pixels(screen, &dxgi_outputs)?;
+        #[cfg(not(target_os = "windows"))]
+        let image = capture_monitor_pixels(screen, &dxgi_outputs)?;
+        monitor.image = Some(image);
+    }
+    Ok(())
 }
 
 struct CaptureSessionState {
@@ -189,6 +309,32 @@ fn build_composite_plan(
     })
 }
 
+/// Decode a `data:image/<type>;base64,...` URL into raw bytes.
+///
+/// The frontend may hand over PNG or JPEG depending on the configured output
+/// format, so the MIME type is read from the URL instead of being assumed.
+pub fn decode_image_data_url(data_url: &str) -> Result<Vec<u8>, String> {
+    let (header, payload) = data_url
+        .split_once(',')
+        .ok_or("Invalid data URL: no payload")?;
+    if !header.starts_with("data:image/") {
+        return Err("Invalid data URL: not an image".into());
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(payload.trim())
+        .map_err(|error| error.to_string())
+}
+
+/// File extension matching the MIME type of a `data:image/...` URL.
+pub fn image_extension(data_url: &str) -> &'static str {
+    let header = data_url.split(',').next().unwrap_or_default();
+    if header.contains("jpeg") || header.contains("jpg") {
+        "jpg"
+    } else {
+        "png"
+    }
+}
+
 fn encode_png(image: &screenshots::image::RgbaImage) -> Result<String, String> {
     let mut buffer = Cursor::new(Vec::new());
     image
@@ -200,31 +346,40 @@ fn encode_png(image: &screenshots::image::RgbaImage) -> Result<String, String> {
     ))
 }
 
+fn geometry_of(monitor: &CapturedMonitor) -> MonitorGeometry {
+    MonitorGeometry {
+        x: monitor.metadata.logical_x,
+        y: monitor.metadata.logical_y,
+        width: monitor.metadata.logical_width,
+        height: monitor.metadata.logical_height,
+        scale: monitor.metadata.scale_factor,
+        physical_width: monitor.metadata.physical_width,
+        physical_height: monitor.metadata.physical_height,
+    }
+}
+
+fn composite_plan_for(
+    selection: LogicalRect,
+    monitors: &[CapturedMonitor],
+) -> Result<CompositePlan, String> {
+    let geometries: Vec<_> = monitors.iter().map(geometry_of).collect();
+    build_composite_plan(selection, &geometries)
+}
+
 fn render_composite(
     selection: LogicalRect,
     monitors: &[CapturedMonitor],
 ) -> Result<screenshots::image::RgbaImage, String> {
-    let geometries: Vec<_> = monitors
-        .iter()
-        .map(|monitor| MonitorGeometry {
-            x: monitor.metadata.logical_x,
-            y: monitor.metadata.logical_y,
-            width: monitor.metadata.logical_width,
-            height: monitor.metadata.logical_height,
-            scale: monitor.metadata.scale_factor,
-            physical_width: monitor.metadata.physical_width,
-            physical_height: monitor.metadata.physical_height,
-        })
-        .collect();
-    let plan = build_composite_plan(selection, &geometries)?;
+    let plan = composite_plan_for(selection, monitors)?;
     let mut output = screenshots::image::RgbaImage::new(plan.output_width, plan.output_height);
 
     for crop in plan.crops {
         let source = monitors
             .get(crop.monitor_index)
+            .and_then(|monitor| monitor.image.as_ref())
             .ok_or_else(|| "Composite plan referenced an unavailable monitor".to_string())?;
         let cropped = screenshots::image::imageops::crop_imm(
-            &source.image,
+            source,
             crop.src_x,
             crop.src_y,
             crop.src_width,
@@ -252,47 +407,17 @@ fn render_composite(
 pub fn begin_capture_session(
     sessions: tauri::State<'_, CaptureSessions>,
 ) -> Result<CaptureSessionResult, String> {
-    let mut screens = Screen::all().map_err(|error| error.to_string())?;
-    if screens.is_empty() {
-        return Err("No monitors are available for capture".into());
-    }
-    screens.sort_by_key(|screen| {
-        (
-            screen.display_info.x,
-            screen.display_info.y,
-            screen.display_info.id,
-        )
-    });
+    let screens = sorted_screens()?;
 
-    // Desktop Duplication is the primary capture path. It hands out the frame
-    // the display engine actually produced, so hardware accelerated surfaces
-    // (Chrome, video players, GPU wallpapers) are captured instead of coming
-    // back as a black rectangle the way a desktop `BitBlt` reports them. This
-    // is the same primary/fallback split Lightshot ships in
-    // `DXGIODScreenshot.dll`. An empty list simply means every monitor takes
-    // the GDI path below.
-    #[cfg(target_os = "windows")]
-    let dxgi_outputs = crate::dxgi_capture::capture_outputs();
-
+    // Nothing is captured here. The selection overlay is transparent and dims the
+    // live desktop, so it never needs a frame - and reading one costs about a
+    // quarter of a second per 4K monitor, all of it between the PrintScreen
+    // press and the overlay appearing. The pixels are read when the selection is
+    // finalized, which also means the capture is of the screen as it is at that
+    // moment instead of as it was when the hotkey fired.
     let mut captured = Vec::with_capacity(screens.len());
-    for screen in screens {
+    for screen in &screens {
         let info = screen.display_info;
-
-        // Outputs are matched by desktop-space origin, which is exactly the
-        // coordinate space `EnumDisplayMonitors` reported `info.x`/`info.y` in,
-        // so a mixed-DPI or multi-adapter desktop still lines up with the
-        // overlay geometry.
-        #[cfg(target_os = "windows")]
-        let image = match dxgi_outputs
-            .iter()
-            .find(|output| output.x == info.x && output.y == info.y)
-        {
-            Some(output) => output.image.clone(),
-            None => screen.capture().map_err(|error| error.to_string())?,
-        };
-        #[cfg(not(target_os = "windows"))]
-        let image = screen.capture().map_err(|error| error.to_string())?;
-
         let scale = f64::from(info.scale_factor);
         if !scale.is_finite() || scale <= 0.0 {
             return Err(format!(
@@ -308,12 +433,14 @@ pub fn begin_capture_session(
             logical_y: f64::from(info.y),
             logical_width: f64::from(info.width),
             logical_height: f64::from(info.height),
-            physical_width: image.width(),
-            physical_height: image.height(),
+            physical_width: info.width,
+            physical_height: info.height,
             scale_factor: scale,
-            image_data: encode_png(&image)?,
         };
-        captured.push(CapturedMonitor { metadata, image });
+        captured.push(CapturedMonitor {
+            metadata,
+            image: None,
+        });
     }
 
     let virtual_x = captured
@@ -394,7 +521,7 @@ pub fn finalize_capture_session(
         .lock()
         .map_err(|_| "Capture session state is unavailable".to_string())?;
     let session = current
-        .as_ref()
+        .as_mut()
         .ok_or_else(|| "No capture session is active".to_string())?;
     if session.session_id != session_id {
         return Err("The capture session is stale".into());
@@ -406,6 +533,10 @@ pub fn finalize_capture_session(
         width: selection.width,
         height: selection.height,
     };
+    // The pixels are read here, not when the hotkey fired: only the monitors the
+    // selection actually covers are captured, and the screen state is current.
+    let plan = composite_plan_for(selection, &session.monitors)?;
+    capture_planned_monitors(&mut session.monitors, &plan)?;
     let output = render_composite(selection, &session.monitors)?;
 
     let result = CaptureResult {
@@ -468,8 +599,8 @@ pub fn capture_full_screen(app: AppHandle) -> Result<CaptureResult, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_composite_plan, render_composite, CapturedMonitor, LogicalRect, MonitorCapture,
-        MonitorGeometry,
+        build_composite_plan, decode_image_data_url, image_extension, render_composite,
+        CapturedMonitor, LogicalRect, MonitorCapture, MonitorGeometry,
     };
 
     fn monitor(x: f64, y: f64, width: f64, height: f64, scale: f64) -> MonitorGeometry {
@@ -615,9 +746,8 @@ mod tests {
                 physical_width: 2,
                 physical_height: 2,
                 scale_factor: 1.0,
-                image_data: String::new(),
             },
-            image: RgbaImage::from_pixel(2, 2, Rgba([255, 0, 0, 255])),
+            image: Some(RgbaImage::from_pixel(2, 2, Rgba([255, 0, 0, 255]))),
         };
         let second = CapturedMonitor {
             metadata: MonitorCapture {
@@ -631,9 +761,8 @@ mod tests {
                 physical_width: 4,
                 physical_height: 4,
                 scale_factor: 2.0,
-                image_data: String::new(),
             },
-            image: RgbaImage::from_pixel(4, 4, Rgba([0, 0, 255, 255])),
+            image: Some(RgbaImage::from_pixel(4, 4, Rgba([0, 0, 255, 255]))),
         };
 
         let composite = render_composite(
@@ -650,6 +779,24 @@ mod tests {
         assert_eq!(composite.dimensions(), (4, 4));
         assert_eq!(composite.get_pixel(0, 0).0, [255, 0, 0, 255]);
         assert_eq!(composite.get_pixel(3, 0).0, [0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn decodes_png_and_jpeg_payloads_and_names_the_file_after_them() {
+        let png = "data:image/png;base64,aGk=";
+        let jpeg = "data:image/jpeg;base64,aGk=";
+
+        assert_eq!(decode_image_data_url(png).unwrap(), b"hi");
+        assert_eq!(decode_image_data_url(jpeg).unwrap(), b"hi");
+        assert_eq!(image_extension(png), "png");
+        assert_eq!(image_extension(jpeg), "jpg");
+    }
+
+    #[test]
+    fn refuses_a_payload_that_is_not_an_image_data_url() {
+        assert!(decode_image_data_url("data:text/plain;base64,aGk=").is_err());
+        assert!(decode_image_data_url("aGk=").is_err());
+        assert!(decode_image_data_url("data:image/png;base64,***").is_err());
     }
 }
 
@@ -712,23 +859,16 @@ pub fn save_screenshot(
     last_save_dir: String,
 ) -> Result<String, String> {
     // Decode base64
-    let base64_data = image_data
-        .strip_prefix("data:image/png;base64,")
-        .ok_or("Invalid data URL")?;
-
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(base64_data)
-        .map_err(|e| e.to_string())?;
+    let bytes = decode_image_data_url(&image_data)?;
 
     // Generate default filename
-    let timestamp = get_timestamp();
-    let filename = format!("Screenshot_{}.png", timestamp);
+    let filename = format!("Screenshot_{}.{}", get_timestamp(), image_extension(&image_data));
 
     // Show save dialog
     let file_path = app
         .dialog()
         .file()
-        .add_filter("PNG Image", &["png"])
+        .add_filter("Image", &["png", "jpg", "jpeg"])
         .set_file_name(&filename)
         .set_directory(&last_save_dir)
         .blocking_save_file();
@@ -765,22 +905,19 @@ pub fn save_screenshots(
 
     let decoded: Result<Vec<Vec<u8>>, String> = image_data
         .iter()
-        .map(|data| {
-            let base64_data = data
-                .strip_prefix("data:image/png;base64,")
-                .ok_or("Invalid data URL".to_string())?;
-            base64::engine::general_purpose::STANDARD
-                .decode(base64_data)
-                .map_err(|e| e.to_string())
-        })
+        .map(|data| decode_image_data_url(data))
         .collect();
     let decoded = decoded?;
 
-    let filename = format!("Screenshot_{}.png", get_timestamp());
+    let extension = image_data
+        .first()
+        .map(|data| image_extension(data))
+        .unwrap_or("png");
+    let filename = format!("Screenshot_{}.{}", get_timestamp(), extension);
     let selected = app
         .dialog()
         .file()
-        .add_filter("PNG Image", &["png"])
+        .add_filter("Image", &["png", "jpg", "jpeg"])
         .set_file_name(&filename)
         .set_directory(&last_save_dir)
         .blocking_save_file()
@@ -799,7 +936,7 @@ pub fn save_screenshots(
         let path = if index == 0 {
             selected_path.clone()
         } else {
-            parent.join(format!("{}_{}.png", stem, index + 1))
+            parent.join(format!("{}_{}.{}", stem, index + 1, extension))
         };
         std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
     }
@@ -826,21 +963,20 @@ pub fn save_screenshots_quick(
     };
     std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
 
+    let extension = image_data
+        .first()
+        .map(|data| image_extension(data))
+        .unwrap_or("png");
     let stem = format!("Screenshot_{}", get_timestamp());
     let mut first_path = None;
     for (index, data) in image_data.iter().enumerate() {
-        let base64_data = data
-            .strip_prefix("data:image/png;base64,")
-            .ok_or("Invalid data URL".to_string())?;
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(base64_data)
-            .map_err(|e| e.to_string())?;
+        let bytes = decode_image_data_url(data)?;
         let suffix = if index == 0 {
             String::new()
         } else {
             format!("_{}", index + 1)
         };
-        let path = directory.join(format!("{}{}.png", stem, suffix));
+        let path = directory.join(format!("{}{}.{}", stem, suffix, extension));
         if index == 0 {
             first_path = Some(path.clone());
         }
@@ -850,6 +986,40 @@ pub fn save_screenshots_quick(
     first_path
         .map(|path| path.to_string_lossy().to_string())
         .ok_or("No images to save".to_string())
+}
+
+/// Show a saved screenshot in the system file manager, selected.
+///
+/// This backs the "Screenshot is saved to &lt;file&gt;. Click here to open in the
+/// folder." notification Lightshot shows after every save.
+#[tauri::command]
+pub fn reveal_in_file_manager(app: AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_shell::ShellExt;
+
+    let target = std::path::PathBuf::from(&path);
+    if !target.exists() {
+        return Err(format!("{path} does not exist"));
+    }
+    let directory = target
+        .parent()
+        .map(|parent| parent.to_path_buf())
+        .unwrap_or_default();
+
+    // `explorer /select,` highlights the file inside its folder. When the parent
+    // directory cannot be opened, fall back to opening the file itself.
+    let selection = format!("/select,\"{}\"", target.display());
+    let spawned = app
+        .shell()
+        .command("explorer.exe")
+        .args([selection])
+        .spawn();
+    if spawned.is_err() {
+        return app
+            .shell()
+            .open(directory.to_string_lossy().to_string(), None)
+            .map_err(|error| error.to_string());
+    }
+    Ok(())
 }
 
 fn get_timestamp() -> String {

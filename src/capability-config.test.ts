@@ -13,7 +13,7 @@ describe("capability configuration", () => {
   );
 
   it("declares each configured window label explicitly", () => {
-    expect(configuredLabels).toEqual(["main", "settings"]);
+    expect(configuredLabels).toEqual(["main", "settings", "toast"]);
     expect(config.app.windows[0].label).toBe("main");
   });
 

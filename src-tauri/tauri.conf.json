@@ -46,6 +46,20 @@
         "visible": false,
         "skipTaskbar": false,
         "focus": true
+      },
+      {
+        "label": "toast",
+        "title": "Cap2Clip",
+        "url": "index.html?window=toast",
+        "width": 420,
+        "height": 110,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "visible": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "focus": false
       }
     ]
   },

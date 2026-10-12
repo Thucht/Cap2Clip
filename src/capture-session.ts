@@ -23,7 +23,6 @@ export interface MonitorCapture {
   physical_width: number;
   physical_height: number;
   scale_factor: number;
-  image_data: string;
 }
 
 export interface CaptureSession {

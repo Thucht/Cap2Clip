@@ -27,7 +27,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
   const [newPresetType, setNewPresetType] = useState<"fixed_size" | "aspect_ratio">("fixed_size");
   const [conflictError, setConflictError] = useState("");
   const [recordingKey, setRecordingKey] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"general" | "shortcuts" | "presets">("general");
+  const [activeTab, setActiveTab] = useState<"general" | "capture" | "shortcuts" | "presets">("general");
 
   useEffect(() => {
     setLocal(normalizeSettings(settings));
@@ -178,7 +178,7 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
           <button className="settings-close" onClick={onClose} aria-label="Close settings">×</button>
         </div>
         <nav className="settings-tabs" aria-label="Settings sections">
-          {([['general', 'General'], ['shortcuts', 'Shortcuts'], ['presets', 'Presets']] as const).map(([id, label]) => (
+          {([['general', 'General'], ['capture', 'Capture'], ['shortcuts', 'Shortcuts'], ['presets', 'Presets']] as const).map(([id, label]) => (
             <button key={id} className={activeTab === id ? "active" : ""} onClick={() => setActiveTab(id)}>{label}</button>
           ))}
         </nav>
@@ -187,6 +187,15 @@ export function SettingsPanel({ settings, onSave, onClose }: SettingsPanelProps)
             <h3>Application</h3>
             <div className="setting-row"><div><label>Start with Windows</label><small>Launch Cap2Clip when you sign in</small></div><button className={`toggle-btn ${local.auto_start ? "on" : "off"}`} onClick={() => updateField("auto_start", !local.auto_start)}>{local.auto_start ? "ON" : "OFF"}</button></div>
             <div className="setting-row"><div><label>Global shortcuts</label><small>Allow capture shortcuts outside the app</small></div><button className={`toggle-btn ${local.shortcuts_enabled ? "on" : "off"}`} onClick={() => updateField("shortcuts_enabled", !local.shortcuts_enabled)}>{local.shortcuts_enabled ? "ON" : "OFF"}</button></div>
+          </div>}
+          {activeTab === "capture" && <div className="settings-section">
+            <h3>General</h3><p className="settings-help">Options mirrored from Lightshot.</p>
+            <div className="setting-row"><div><label>Capture a cursor on a screenshot</label><small>Draw the mouse pointer into the captured image</small></div><button className={`toggle-btn ${local.capture_cursor ? "on" : "off"}`} onClick={() => updateField("capture_cursor", !local.capture_cursor)}>{local.capture_cursor ? "ON" : "OFF"}</button></div>
+            <div className="setting-row"><div><label>Show notifications</label><small>Confirm copying and saving with a bubble</small></div><button className={`toggle-btn ${local.show_notifications ? "on" : "off"}`} onClick={() => updateField("show_notifications", !local.show_notifications)}>{local.show_notifications ? "ON" : "OFF"}</button></div>
+            <div className="setting-row"><div><label>Keep the selected area position</label><small>Pre-select the previous region on the next capture</small></div><button className={`toggle-btn ${local.keep_selection ? "on" : "off"}`} onClick={() => updateField("keep_selection", !local.keep_selection)}>{local.keep_selection ? "ON" : "OFF"}</button></div>
+            <h3 className="settings-subheading">Formats</h3>
+            <div className="setting-row"><div><label>Save using the format</label><small>File type written to disk and copied to the clipboard</small></div><select value={local.image_format} onChange={(e) => updateField("image_format", e.target.value as AppSettings["image_format"])}><option value="png">PNG</option><option value="jpeg">JPEG</option></select></div>
+            {local.image_format === "jpeg" && <div className="setting-row"><div><label>JPEG quality</label><small>Higher quality means a larger file</small></div><div className="quality-control"><input type="range" min="10" max="100" step="5" value={local.jpeg_quality} onChange={(e) => updateField("jpeg_quality", Number(e.target.value))} /><span className="shortcut-badge">{local.jpeg_quality}</span></div></div>}
           </div>}
           {activeTab === "shortcuts" && <div className="settings-section">
             <h3>Global capture shortcuts</h3><p className="settings-help">Registered with the operating system, so they work outside Cap2Clip. Click a field and press the combination you want.</p>

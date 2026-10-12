@@ -2,7 +2,8 @@ import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { AnnotationCanvas } from "./AnnotationCanvas";
 import { AnnotationToolbar } from "./AnnotationToolbar";
 import type { Tool } from "./AnnotationToolbar";
-import type { Preset, SelectionGeometry } from "../App";
+import type { ImageFormat, Preset, SelectionGeometry } from "../App";
+import { buildExportOptions, canvasEncoding } from "../export-format";
 import {
   calculateFrameMapping,
   calculateImageMapping,
@@ -32,9 +33,14 @@ interface CaptureOverlayProps {
   onToolChange: (tool: Tool) => void;
   onEnterAnnotate: (rect: SelectionGeometry) => void;
   onCopy: (finalImage: string) => void;
+  onPrint: (finalImage: string) => void;
   onSaveDialog: (images: string[]) => void;
   onQuickSave: (images: string[]) => void;
   onCancel: () => void;
+  /** Last selection, replayed when "Keep the selected area position" is on. */
+  previousSelection?: SelectionGeometry | null;
+  imageFormat?: ImageFormat;
+  jpegQuality?: number;
   shortcutCopy: string;
   shortcutSave: string;
   shortcutCancel: string;
@@ -54,9 +60,13 @@ export function CaptureOverlay({
   onToolChange,
   onEnterAnnotate,
   onCopy,
+  onPrint,
   onSaveDialog,
   onQuickSave,
   onCancel,
+  previousSelection = null,
+  imageFormat = "png",
+  jpegQuality = 90,
   shortcutCopy,
   shortcutSave,
   shortcutCancel,
@@ -65,8 +75,26 @@ export function CaptureOverlay({
   const [rect, setRect] = useState<SelectionGeometry | null>(selectionRect);
   const [isDragging, setIsDragging] = useState(false);
   const [draftRect, setDraftRect] = useState<SelectionGeometry | null>(null);
+  /**
+   * True while the draft rectangle is driven by the desktop-wide cursor poll.
+   *
+   * Only the overlay the gesture started in receives the `mousedown`, so the
+   * monitor the pointer crosses into has `isDragging === false` for the whole
+   * drag. Rendering the draft on `draftRect` alone is what makes a selection
+   * that spans two screens show up on the second one.
+   */
+  const [draftFromCursorPoll, setDraftFromCursorPoll] = useState(false);
   const [startPoint, setStartPoint] = useState({ x: 0, y: 0 });
   const [cursorPoint, setCursorPoint] = useState<{ x: number; y: number } | null>(null);
+  /**
+   * True once the pointer has actually been over this overlay.
+   *
+   * The hint follows the cursor, but a monitor the pointer never visited would
+   * otherwise leave it parked at the origin and clipped against the screen edge
+   * - which is exactly the "no sign the capture mode is active" case on the
+   * second monitor. Until then the hint stays in its default centred position.
+   */
+  const [cursorInside, setCursorInside] = useState(false);
   const [isResizing, setIsResizing] = useState<string | null>(null);
   const [isMoving, setIsMoving] = useState(false);
   const [resizeStart, setResizeStart] = useState({ x: 0, y: 0, rx: 0, ry: 0, rw: 0, rh: 0 });
@@ -141,6 +169,17 @@ export function CaptureOverlay({
     return bounds ? viewportPoint(event.clientX, event.clientY, bounds) : { x: event.clientX, y: event.clientY };
   }, []);
 
+  /**
+   * Fabric export options for the configured output format.
+   *
+   * Lightshot exposes "Upload using the format" and "JPEG quality"; the same
+   * pair decides how a saved screenshot is encoded here.
+   */
+  const exportOptions = useCallback(
+    (multiplier: number) => buildExportOptions(imageFormat, jpegQuality, multiplier),
+    [imageFormat, jpegQuality],
+  );
+
   // Initialize rect when entering selecting phase
   useEffect(() => {
     if (fullScreenshot && fullScreenshot !== captureFrame && phase === "selecting") {
@@ -157,16 +196,25 @@ export function CaptureOverlay({
         setRegionRects([visibleRect]);
       } else {
         setCaptureFrame(fullScreenshot);
-        setRect(null);
-        setRegionRects([]);
+        // Lightshot's "Keep the selected area position": replay the previous
+        // rectangle so the common case needs no drag at all. Each overlay only
+        // owns its own monitor, so a selection that crossed monitors is clipped
+        // to the part this window can show.
+        const remembered =
+          previousSelection && monitorCapture
+            ? intersectGlobalSelection(previousSelection, monitorCapture)
+            : null;
+        setRect(remembered);
+        setRegionRects(remembered ? [remembered] : []);
       }
       setIsDragging(false);
       setDraftRect(null);
+      setDraftFromCursorPoll(false);
       setIsResizing(null);
       setIsMoving(false);
       setShowPresetDropdown(false);
     }
-  }, [phase, selectionRect]);
+  }, [phase, selectionRect, previousSelection, monitorCapture, screenW, screenH, fullScreenshot]);
 
   // Sync rect when entering annotating phase
   useEffect(() => {
@@ -186,12 +234,17 @@ export function CaptureOverlay({
     listen<SelectionGeometry | null>("capture-selection-updated", ({ payload }) => {
       if (globalDragStart.current) return;
       const local = payload ? intersectGlobalSelection(payload, monitorCapture) : null;
-      setDraftRect(local ? {
-        x: local.x - monitorCapture.logical_x,
-        y: local.y - monitorCapture.logical_y,
-        width: local.width,
-        height: local.height,
-      } : null);
+      if (!local) {
+        setDraftFromCursorPoll(false);
+        setDraftRect(null);
+        return;
+      }
+      setDraftFromCursorPoll(true);
+      setDraftRect(local);
+      // Keep the size hint under the pointer on the monitor that did not
+      // receive the `mousedown` and therefore has no pointer events.
+      setCursorInside(true);
+      setCursorPoint({ x: local.x, y: local.y });
     }).then((unlisten) => { unlistenUpdate = unlisten; });
 
     const poll = async () => {
@@ -287,6 +340,7 @@ export function CaptureOverlay({
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const point = pointerPoint(e);
     setCursorPoint(point);
+    setCursorInside(true);
 
     // There is no committed rectangle during the first drag. Keep handling
     // movement so that the initial selection draft grows with the cursor.
@@ -343,7 +397,7 @@ export function CaptureOverlay({
     if (!rect || !canvas?.toDataURL || !canvas?.clearAnnotations) return;
     const objects = canvas.getCanvas?.()?.getObjects?.() ?? [];
     if (objects.length === 0) return;
-    const snapshot = canvas.toDataURL({ format: "png", multiplier: liveImageMapping().scaleX });
+    const snapshot = canvas.toDataURL(exportOptions(liveImageMapping().scaleX));
     const index = regionRects.length - 1;
     setCapturedImages((current) => {
       const next = current.slice();
@@ -351,7 +405,7 @@ export function CaptureOverlay({
       return next;
     });
     canvas.clearAnnotations();
-  }, [rect, regionRects.length, liveImageMapping]);
+  }, [rect, regionRects.length, liveImageMapping, exportOptions]);
 
   const handleMouseUp = useCallback(() => {
     // The cross-monitor cursor poll owns the gesture while it is running: it
@@ -360,6 +414,7 @@ export function CaptureOverlay({
     // would publish a second, different rectangle for the same drag.
     if (globalDragStart.current) {
       setDraftRect(null);
+      setDraftFromCursorPoll(false);
       setIsDragging(false);
       return;
     }
@@ -392,6 +447,7 @@ export function CaptureOverlay({
   const handleMouseLeave = useCallback(() => {
     setIsDragging(false);
     setDraftRect(null);
+    setDraftFromCursorPoll(false);
   }, []);
 
   // Resize handle mouse down - works in BOTH phases
@@ -479,25 +535,26 @@ export function CaptureOverlay({
           imageRect.x, imageRect.y, imageRect.width, imageRect.height,
           0, 0, crop.width, crop.height
         );
-        resolve(crop.toDataURL("image/png"));
+        const [mime, quality] = canvasEncoding(imageFormat, jpegQuality);
+        resolve(crop.toDataURL(mime, quality));
       };
       image.onerror = () => reject(new Error("Could not load screenshot"));
       image.src = captureFrame || fullScreenshot;
     });
-  }, [captureFrame, fullScreenshot, liveImageMapping]);
+  }, [captureFrame, fullScreenshot, liveImageMapping, imageFormat, jpegQuality]);
 
   const getExportImages = useCallback(async (): Promise<string[]> => {
     const scale = liveImageMapping().scaleX;
     if (!multiRegion || regionRects.length <= 1) {
       if (!canvasRef.current?.toDataURL) return [];
-      return [canvasRef.current.toDataURL({ format: "png", multiplier: scale })];
+      return [canvasRef.current.toDataURL(exportOptions(scale))];
     }
 
     const images: string[] = [];
     for (let index = 0; index < regionRects.length; index += 1) {
       const isActiveRegion = index === regionRects.length - 1;
       if (isActiveRegion && canvasRef.current?.toDataURL) {
-        images.push(canvasRef.current.toDataURL({ format: "png", multiplier: scale }));
+        images.push(canvasRef.current.toDataURL(exportOptions(scale)));
       } else {
         // Sealed regions keep their composited snapshot when they had
         // annotations; annotation-free regions fall back to a plain crop.
@@ -505,14 +562,41 @@ export function CaptureOverlay({
       }
     }
     return images;
-  }, [multiRegion, regionRects, capturedImages, cropRegion, liveImageMapping]);
+  }, [multiRegion, regionRects, capturedImages, cropRegion, liveImageMapping, exportOptions]);
 
   const handleCopyClick = useCallback(() => {
     if (canvasRef.current?.toDataURL) {
-      const dataUrl = canvasRef.current.toDataURL({ format: "png", multiplier: liveImageMapping().scaleX });
-      onCopy(dataUrl);
+      onCopy(canvasRef.current.toDataURL(exportOptions(liveImageMapping().scaleX)));
     }
-  }, [liveImageMapping, onCopy]);
+  }, [liveImageMapping, exportOptions, onCopy]);
+
+  const handlePrintClick = useCallback(() => {
+    if (canvasRef.current?.toDataURL) {
+      // Printing always goes through an uncompressed temporary file, so the
+      // output format setting cannot degrade what the printer receives.
+      onPrint(
+        canvasRef.current.toDataURL({
+          format: "png",
+          multiplier: liveImageMapping().scaleX,
+        }),
+      );
+    }
+  }, [liveImageMapping, onPrint]);
+
+  // Lightshot's "Select full screen" / "Clear selection" buttons. Both act on
+  // this overlay only, which is exactly one monitor.
+  const handleSelectFullScreen = useCallback(() => {
+    const full: SelectionGeometry = { x: 0, y: 0, width: screenW, height: screenH };
+    setRect(full);
+    setRegionRects([full]);
+    setDraftRect(null);
+  }, [screenW, screenH]);
+
+  const handleClearSelection = useCallback(() => {
+    setRect(null);
+    setRegionRects([]);
+    setDraftRect(null);
+  }, []);
 
   const handleSaveClick = useCallback(async () => {
     try {
@@ -541,11 +625,20 @@ export function CaptureOverlay({
         if (matchesShortcut(e, shortcutCopy)) { e.preventDefault(); handleCopyClick(); return; }
         if (matchesShortcut(e, shortcutSave)) { e.preventDefault(); handleQuickSaveClick(); return; }
       }
+      // "Select full screen", a preset or a replayed region leaves a rectangle
+      // standing without a drag behind it, so Enter is what turns it into a
+      // capture. Clicking inside the rectangle moves it, which is why the
+      // confirmation cannot be a click.
+      if (phase === "selecting" && (e.key === "Enter" || e.key === "NumpadEnter") && rect && rect.width > 1 && rect.height > 1) {
+        e.preventDefault();
+        onEnterAnnotate(rect);
+        return;
+      }
       if (matchesShortcut(e, shortcutCancel)) { e.preventDefault(); onCancel(); }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [phase, shortcutCopy, shortcutSave, shortcutCancel, handleCopyClick, handleQuickSaveClick, onCancel]);
+  }, [phase, rect, shortcutCopy, shortcutSave, shortcutCancel, handleCopyClick, handleQuickSaveClick, onEnterAnnotate, onCancel]);
 
   // Render backdrops (darkened areas outside selection)
   const renderBackdrops = () => {
@@ -583,7 +676,8 @@ export function CaptureOverlay({
   );
 
   const renderSelectionDraft = () => {
-    if (!isDragging || !draftRect || draftRect.width < 1 || draftRect.height < 1) return null;
+    const visible = isDragging || draftFromCursorPoll;
+    if (!visible || !draftRect || draftRect.width < 1 || draftRect.height < 1) return null;
     return (
       <div
         className="selection-draft"
@@ -630,16 +724,27 @@ export function CaptureOverlay({
           {renderBackdrops()}
 
           {/* Hint text */}
-          <div
-            className={`capture-hint ${!rect ? "capture-hint-cursor" : ""}`}
-            style={!rect && cursorPoint ? { left: cursorPoint.x, top: cursorPoint.y } : undefined}
-          >
-            {!rect || rect.width < 5 ? (
-              "Click and drag to select region"
-            ) : (
-              `${rect.width} × ${rect.height} — Drag edges to resize • Drag inside to move`
-            )}
-          </div>
+          {!(
+            (isDragging || draftFromCursorPoll) &&
+            draftRect &&
+            draftRect.width >= 1 &&
+            draftRect.height >= 1
+          ) && (
+            <div
+              className={`capture-hint ${!rect && cursorInside ? "capture-hint-cursor" : ""}`}
+              style={
+                !rect && cursorInside && cursorPoint
+                  ? { left: cursorPoint.x, top: cursorPoint.y }
+                  : undefined
+              }
+            >
+              {!rect || rect.width < 5 ? (
+                "Click and drag to select region"
+              ) : (
+                `${rect.width} × ${rect.height} — Drag edges to resize • Drag inside to move`
+              )}
+            </div>
+          )}
 
           {/* Preset bar */}
           <div className="preset-bar" onMouseDown={(e) => e.stopPropagation()}>
@@ -667,6 +772,15 @@ export function CaptureOverlay({
                 </div>
               )}
             </div>
+            {/* Lightshot parity: "Select full screen" and "Clear selection". */}
+            <button className="overlay-quick-btn" onClick={(e) => { e.stopPropagation(); handleSelectFullScreen(); }}>
+              Select full screen
+            </button>
+            {rect && (
+              <button className="overlay-quick-btn" onClick={(e) => { e.stopPropagation(); handleClearSelection(); }}>
+                Clear selection
+              </button>
+            )}
           </div>
 
           {/* Selection rectangle with handles */}
@@ -729,6 +843,7 @@ export function CaptureOverlay({
           {/* Split toolbars: horizontal (actions) + vertical (drawing tools) */}
           <AnnotationToolbar
             onCopy={handleCopyClick}
+            onPrint={handlePrintClick}
             onSaveDialog={handleSaveClick}
             onCancel={onCancel}
             multiRegion={multiRegion}

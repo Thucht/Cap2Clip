@@ -19,9 +19,7 @@ export const MIXED_DPI_TOPOLOGY = [
     logical_height: 1440,
     physical_width: 3840,
     physical_height: 2160,
-    scale_factor: 1.5,
-    image_data: "data:image/png;base64,left",
-  },
+    scale_factor: 1.5,  },
   {
     monitor_id: 20,
     physical_x: 0,
@@ -32,9 +30,7 @@ export const MIXED_DPI_TOPOLOGY = [
     logical_height: 1080,
     physical_width: 3840,
     physical_height: 2160,
-    scale_factor: 2,
-    image_data: "data:image/png;base64,right",
-  },
+    scale_factor: 2,  },
 ] as const;
 
 describe("virtual desktop capture geometry", () => {

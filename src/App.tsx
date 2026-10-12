@@ -6,9 +6,11 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { CaptureOverlay } from "./components/CaptureOverlay";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { Toast } from "./components/Toast";
 import type { Tool } from "./components/AnnotationToolbar";
 import type { CaptureWindowGeometry } from "./geometry";
 import { monitorPhysicalRectToLogical } from "./capture-session";
+import { overlayMonitorId } from "./app-context";
 import type { CaptureSession, MonitorCapture } from "./capture-session";
 
 export interface Preset {
@@ -38,6 +40,8 @@ export interface CaptureResult {
   y: number;
 }
 
+export type ImageFormat = "png" | "jpeg";
+
 export interface AppSettings {
   shortcut_region: string;
   shortcut_fullscreen: string;
@@ -50,39 +54,108 @@ export interface AppSettings {
   presets: Preset[];
   auto_start: boolean;
   shortcuts: { [key: string]: string };
+  /** Lightshot parity: "Show notifications about copying and saving". */
+  show_notifications: boolean;
+  /** Lightshot parity: "Capture a cursor on a screenshot". */
+  capture_cursor: boolean;
+  /** Lightshot parity: "Keep the selected area position". */
+  keep_selection: boolean;
+  /** Lightshot parity: "Upload using the format" / "JPEG quality". */
+  image_format: ImageFormat;
+  jpeg_quality: number;
 }
+
+/** One entry for the notification bubble rendered in the `toast` window. */
+export interface ToastPayload {
+  message: string;
+  icon?: string;
+  action?: string;
+  path?: string;
+  url?: string;
+  duration_ms?: number;
+}
+
+const DEFAULT_SETTINGS: AppSettings = {
+  shortcut_region: "PrintScreen",
+  shortcut_fullscreen: "Shift+PrintScreen",
+  shortcut_copy: "Ctrl+C",
+  shortcut_save: "Ctrl+S",
+  shortcut_cancel: "Escape",
+  shortcuts_enabled: true,
+  last_save_dir: "",
+  previous_selection: null,
+  presets: [],
+  auto_start: false,
+  shortcuts: {},
+  show_notifications: true,
+  capture_cursor: false,
+  keep_selection: true,
+  image_format: "png",
+  jpeg_quality: 90,
+};
 
 type SessionPhase = "idle" | "selecting" | "annotating" | "settings";
 
-const isSettingsWindow = new URLSearchParams(window.location.search).get("window") === "settings";
-const overlayMatch = getCurrentWindow().label.match(/^capture-(\d+)$/);
-const overlayMonitorId = overlayMatch ? Number(overlayMatch[1]) : null;
+const windowQuery = new URLSearchParams(window.location.search);
+const isSettingsWindow = windowQuery.get("window") === "settings";
+const isToastWindow = windowQuery.get("window") === "toast";
+/**
+ * The window that drives a capture session.
+ *
+ * Only this window may finalize a selection, resize itself into the editor and
+ * register the capture hotkeys. The per-monitor overlays and the auxiliary
+ * windows load the same `App`, so every listener below is gated on this: without
+ * it the settings window answered `capture-composite-ready` too, which resized
+ * and un-hid it on top of the editor after every capture.
+ */
+const isCoordinatorWindow = !isSettingsWindow && !isToastWindow && overlayMonitorId === null;
+;
+
+
+/** In-flight overlay creations, so a warm-up and a capture cannot both build one. */
+const pendingOverlays = new Map<string, Promise<WebviewWindow>>();
 
 async function ensureCaptureOverlay(monitor: MonitorCapture) {
   const label = `capture-${monitor.monitor_id}`;
   const existing = await WebviewWindow.getByLabel(label);
   if (existing) return existing;
 
-  const bounds = monitorPhysicalRectToLogical(monitor);
-  const overlay = new WebviewWindow(`capture-${monitor.monitor_id}`, {
-    url: `index.html?window=capture&monitor=${monitor.monitor_id}`,
-    x: bounds.x,
-    y: bounds.y,
-    width: bounds.width,
-    height: bounds.height,
-    decorations: false,
-    transparent: true,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    resizable: false,
-    visible: false,
-    focus: false,
-  });
-  await new Promise<void>((resolve, reject) => {
-    overlay.once("tauri://created", () => resolve());
-    overlay.once("tauri://error", ({ payload }) => reject(payload));
-  });
-  return overlay;
+  // The overlays are rebuilt in the background after a capture, so a second
+  // caller (the next capture) can arrive while the first is still creating the
+  // window. Two `WebviewWindow` objects with the same label is an error, and the
+  // loser would be left orphaned on screen.
+  const pending = pendingOverlays.get(label);
+  if (pending) return pending;
+
+  const creation = (async () => {
+    const bounds = monitorPhysicalRectToLogical(monitor);
+    const overlay = new WebviewWindow(label, {
+      url: `index.html?window=capture&monitor=${monitor.monitor_id}`,
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+      decorations: false,
+      transparent: true,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      resizable: false,
+      visible: false,
+      focus: false,
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        overlay.once("tauri://created", () => resolve());
+        overlay.once("tauri://error", ({ payload }) => reject(payload));
+      });
+    } finally {
+      pendingOverlays.delete(label);
+    }
+    return overlay;
+  })();
+
+  pendingOverlays.set(label, creation);
+  return creation;
 }
 
 async function showCaptureOverlays(session: CaptureSession) {
@@ -96,12 +169,15 @@ async function showCaptureOverlays(session: CaptureSession) {
 }
 
 /**
- * Tear the per-monitor overlays down instead of only hiding them.
+ * Tear the per-monitor overlays down instead of only hiding them, then build
+ * the next set straight away.
  *
- * Hiding leaves the WebView alive with the full-desktop base64 screenshot still
- * in React state, so every capture round leaks one WebView process plus one
- * decoded frame per monitor. Destroying is safe because the next capture
- * recreates the window from `ensureCaptureOverlay`.
+ * Hiding leaves the WebView alive with the previous session's React state, so
+ * every capture round would flash a stale selection before the new one is
+ * committed. Destroying is safe, but creating a WebView2 window costs about half
+ * a second per monitor and the user was paying for it between pressing
+ * PrintScreen and seeing the overlay. Rebuilding in the background - while the
+ * editor is on screen - moves that cost off the hotkey.
  */
 async function destroyCaptureOverlays(session: CaptureSession | null) {
   if (!session) return;
@@ -112,6 +188,9 @@ async function destroyCaptureOverlays(session: CaptureSession | null) {
       console.error("Could not destroy capture overlay:", error);
     }
   }));
+  for (const monitor of session.monitors) {
+    void ensureCaptureOverlay(monitor).catch(console.error);
+  }
 }
 
 async function hideCaptureOverlays(session: CaptureSession | null) {
@@ -128,6 +207,58 @@ async function openSettingsWindow() {
   await existing.setFocus();
 }
 
+/**
+ * Show the notification bubble in its own window.
+ *
+ * Lightshot confirms every copy and save with a short message; the bubble is
+ * separate from the editor so it survives the editor hiding itself.
+ */
+async function showToast(payload: ToastPayload) {
+  try {
+    const toast = await WebviewWindow.getByLabel("toast");
+    await toast?.emit("show-toast", payload);
+  } catch (error) {
+    console.error("Could not show the notification:", error);
+  }
+}
+
+/** Smallest editor window; below this the toolbars cover the whole capture. */
+const MIN_EDITOR_WIDTH = 360;
+const MIN_EDITOR_HEIGHT = 260;
+
+/**
+ * Place the editor window on the region the user just captured.
+ *
+ * The window used to keep the size from `tauri.conf.json` and whatever position
+ * Windows gave it, so the capture appeared to jump to another part of the
+ * desktop, and any region larger than that fixed size was clamped away by the
+ * overlay. The window is kept on the virtual desktop instead: a region that
+ * runs off an edge is nudged back into view, and one larger than the desktop is
+ * centred.
+ */
+async function fitEditorWindow(
+  selection: SelectionGeometry,
+  bounds: { x: number; y: number; width: number; height: number } | null,
+) {
+  const width = Math.max(MIN_EDITOR_WIDTH, Math.round(selection.width));
+  const height = Math.max(MIN_EDITOR_HEIGHT, Math.round(selection.height));
+
+  const desktop = bounds && bounds.width > 0 && bounds.height > 0
+    ? bounds
+    : { x: selection.x, y: selection.y, width, height };
+  const place = (offset: number, size: number, origin: number, extent: number) =>
+    size <= extent
+      ? Math.min(Math.max(origin, offset), origin + extent - size)
+      : origin + (extent - size) / 2;
+
+await invoke("fit_editor_window", {
+    x: Math.round(place(selection.x, width, desktop.x, desktop.width)),
+    y: Math.round(place(selection.y, height, desktop.y, desktop.height)),
+    width,
+    height,
+  });
+}
+
 function App() {
   const [phase, setPhase] = useState<SessionPhase>("idle");
   const [fullScreenshot, setFullScreenshot] = useState<string | null>(null);
@@ -141,19 +272,7 @@ function App() {
   const [captureSession, setCaptureSession] = useState<CaptureSession | null>(null);
   const [overlayMonitor, setOverlayMonitor] = useState<MonitorCapture | null>(null);
   const [activeTool, setActiveTool] = useState<Tool>("move");
-  const [settings, setSettings] = useState<AppSettings>({
-    shortcut_region: "PrintScreen",
-    shortcut_fullscreen: "Shift+PrintScreen",
-    shortcut_copy: "Ctrl+C",
-    shortcut_save: "Ctrl+S",
-    shortcut_cancel: "Escape",
-    shortcuts_enabled: true,
-    last_save_dir: "",
-    previous_selection: null,
-    presets: [],
-    auto_start: false,
-    shortcuts: {},
-  });
+  const [settings, setSettings] = useState<AppSettings>({ ...DEFAULT_SETTINGS });
 
   // Load settings on mount. This also runs in the dedicated settings window
   // so the form never starts from defaults and overwrites saved preferences.
@@ -162,9 +281,15 @@ function App() {
       .then((loaded) => {
         // Migrate: ensure new fields exist
         setSettings({
+          ...DEFAULT_SETTINGS,
           ...loaded,
           auto_start: loaded.auto_start ?? false,
           shortcuts: loaded.shortcuts ?? {},
+          show_notifications: loaded.show_notifications ?? true,
+          capture_cursor: loaded.capture_cursor ?? false,
+          keep_selection: loaded.keep_selection ?? true,
+          image_format: loaded.image_format ?? "png",
+          jpeg_quality: Math.min(100, Math.max(1, loaded.jpeg_quality ?? 90)),
         });
       })
       .catch(console.error);
@@ -179,7 +304,6 @@ function App() {
       if (!monitor) return;
       setCaptureSession(session);
       setOverlayMonitor(monitor);
-      setFullScreenshot(monitor.image_data);
       setCaptureSize({ width: monitor.physical_width, height: monitor.physical_height });
       invoke<CaptureWindowGeometry>("resize_window_to_capture", {
         x: monitor.physical_x,
@@ -210,25 +334,36 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (overlayMonitorId !== null) return;
+    if (!isCoordinatorWindow) return;
     let unlistenComposite = () => {};
     let unlistenFinalize = () => {};
     listen<{ session_id: number; selection: SelectionGeometry }>(
       "capture-selection-finalized",
       async ({ payload }) => {
+        const session = captureSessionRef.current;
         try {
           const result = await invoke<CaptureResult>("finalize_capture_session", {
             sessionId: payload.session_id,
             selection: payload.selection,
           });
-          const session = captureSessionRef.current;
           await hideCaptureOverlays(session);
           // The Rust session is consumed by finalize_capture_session, so the
           // coordinator must drop it too - otherwise a later Cancel would try
           // to release a session that no longer exists.
           captureSessionRef.current = null;
           setCaptureSession(null);
-          await emit("capture-composite-ready", { result, selection: payload.selection });
+          await emit("capture-composite-ready", {
+            result,
+            selection: payload.selection,
+            bounds: session
+              ? {
+                  x: session.virtual_x,
+                  y: session.virtual_y,
+                  width: session.virtual_width,
+                  height: session.virtual_height,
+                }
+              : null,
+          });
           // Tear the overlays down only after the editor is on screen, so
           // closing the WebViews never delays the transition the user sees.
           void destroyCaptureOverlays(session);
@@ -237,17 +372,36 @@ function App() {
         }
       },
     ).then((unlisten) => { unlistenFinalize = unlisten; });
-    listen<{ result: CaptureResult; selection: SelectionGeometry }>(
+    listen<{
+      result: CaptureResult;
+      selection: SelectionGeometry;
+      bounds: { x: number; y: number; width: number; height: number } | null;
+    }>(
       "capture-composite-ready",
-      ({ payload }) => {
+      async ({ payload }) => {
+        const window = getCurrentWindow();
+        // The editor takes over the main window, so it is fitted to the captured
+        // region before it is shown. Without this the window keeps its default
+        // position and size: the image jumps somewhere else on the desktop and a
+        // region bigger than 1200x800 is silently cropped by the overlay clamp.
+        await fitEditorWindow(payload.selection, payload.bounds).catch(console.error);
         flushSync(() => {
           setFullScreenshot(payload.result.image_data);
           setCaptureSize({ width: payload.result.width, height: payload.result.height });
           setCaptureGeometry(null);
-          setSelectionRect({ x: 0, y: 0, width: payload.result.width, height: payload.result.height });
+          // The selection is in logical pixels, which is what the overlay lays
+          // out in. The composite is in physical pixels, and `imageMapping` is
+          // what converts one into the other when the canvas is exported.
+          setSelectionRect({
+            x: 0,
+            y: 0,
+            width: Math.max(1, Math.round(payload.selection.width)),
+            height: Math.max(1, Math.round(payload.selection.height)),
+          });
           setPhase("annotating");
         });
-        getCurrentWindow().show().then(() => getCurrentWindow().setFocus());
+        await window.show();
+        await window.setFocus();
       },
     ).then((unlisten) => { unlistenComposite = unlisten; });
     return () => {
@@ -261,12 +415,11 @@ function App() {
   captureSessionRef.current = captureSession;
 
   useEffect(() => {
-    if (isSettingsWindow) return;
+    if (!isCoordinatorWindow) return;
     const unlisteners: (() => void)[] = [];
 
     listen("region-capture", async () => {
       try {
-        if (overlayMonitorId !== null) return;
         const session = await invoke<CaptureSession>("begin_capture_session");
         captureSessionRef.current = session;
         setCaptureSession(session);
@@ -300,49 +453,77 @@ function App() {
 
   const handleCopy = useCallback(
     async (finalImage: string) => {
+      let copied = true;
       try {
         await invoke("copy_image_to_clipboard", { dataUrl: finalImage });
-        if (selectionRect) {
-          const updated = { ...settings, previous_selection: selectionRect };
-          setSettings(updated);
-          await invoke("save_settings", { settings: updated });
-        }
       } catch (e) {
+        copied = false;
         console.error("Copy failed:", e);
+      }
+      // Lightshot only remembers the region when the user asked for it.
+      const updated = settings.keep_selection && selectionRect
+        ? { ...settings, previous_selection: selectionRect }
+        : settings;
+      if (updated !== settings) {
+        setSettings(updated);
+        await invoke("save_settings", { settings: updated }).catch(console.error);
       }
       setPhase("idle");
       setFullScreenshot(null);
       setCaptureGeometry(null);
       setSelectionRect(null);
       getCurrentWindow().hide();
+      if (copied && settings.show_notifications) {
+        void showToast({ message: "Your screenshot is copied to clipboard", icon: "⧉" });
+      }
     },
-    [selectionRect, settings, captureSession]
+    [selectionRect, settings]
   );
+
+  const handlePrint = useCallback(async (finalImage: string) => {
+    try {
+      await invoke("print_image", { imageData: finalImage });
+    } catch (e) {
+      console.error("Print failed:", e);
+    }
+  }, []);
 
   const handleSaveDialog = useCallback(
     async (images: string[]) => {
       if (images.length === 0) return;
+      let savedPath: string | null = null;
       try {
-        const result = await invoke<string>("save_screenshots", {
+        savedPath = await invoke<string>("save_screenshots", {
           imageData: images,
           lastSaveDir: settings.last_save_dir,
         });
-        const dir = result.substring(0, Math.max(result.lastIndexOf("\\"), result.lastIndexOf("/")) + 1);
-        const updated = {
-          ...settings,
-          previous_selection: selectionRect,
-          last_save_dir: dir || settings.last_save_dir,
-        };
-        setSettings(updated);
-        await invoke("save_settings", { settings: updated });
-        setPhase("idle");
-        setFullScreenshot(null);
-        setCaptureGeometry(null);
-        setSelectionRect(null);
-        getCurrentWindow().hide();
       } catch (e) {
         // A cancelled dialog must leave the annotation session open.
         console.error("Save dialog failed or was cancelled:", e);
+        return;
+      }
+      const dir = savedPath.substring(0, Math.max(savedPath.lastIndexOf("\\"), savedPath.lastIndexOf("/")) + 1);
+      const fileName = savedPath.substring(savedPath.lastIndexOf("\\") + 1, savedPath.lastIndexOf("."));
+      const updated = {
+        ...settings,
+        previous_selection: settings.keep_selection ? selectionRect : settings.previous_selection,
+        last_save_dir: dir || settings.last_save_dir,
+      };
+      setSettings(updated);
+      await invoke("save_settings", { settings: updated });
+      setPhase("idle");
+      setFullScreenshot(null);
+      setCaptureGeometry(null);
+      setSelectionRect(null);
+      getCurrentWindow().hide();
+      if (settings.show_notifications) {
+        void showToast({
+          message: `Screenshot is saved to ${fileName}`,
+          icon: "💾",
+          action: "Open folder",
+          path: savedPath,
+          duration_ms: 6000,
+        });
       }
     },
     [selectionRect, settings]
@@ -351,26 +532,38 @@ function App() {
   const handleQuickSave = useCallback(
     async (images: string[]) => {
       if (images.length === 0) return;
+      let result: string | null = null;
       try {
-        const result = await invoke<string>("save_screenshots_quick", {
+        result = await invoke<string>("save_screenshots_quick", {
           imageData: images,
           lastSaveDir: settings.last_save_dir,
         });
-        const dir = result.substring(0, Math.max(result.lastIndexOf("\\"), result.lastIndexOf("/")) + 1);
-        const updated = {
-          ...settings,
-          previous_selection: selectionRect,
-          last_save_dir: dir || settings.last_save_dir,
-        };
-        setSettings(updated);
-        await invoke("save_settings", { settings: updated });
-        setPhase("idle");
-        setFullScreenshot(null);
-        setCaptureGeometry(null);
-        setSelectionRect(null);
-        getCurrentWindow().hide();
       } catch (e) {
         console.error("Quick save failed:", e);
+        return;
+      }
+      const dir = result.substring(0, Math.max(result.lastIndexOf("\\"), result.lastIndexOf("/")) + 1);
+      const fileName = result.substring(result.lastIndexOf("\\") + 1, result.lastIndexOf("."));
+      const updated = {
+        ...settings,
+        previous_selection: settings.keep_selection ? selectionRect : settings.previous_selection,
+        last_save_dir: dir || settings.last_save_dir,
+      };
+      setSettings(updated);
+      await invoke("save_settings", { settings: updated });
+      setPhase("idle");
+      setFullScreenshot(null);
+      setCaptureGeometry(null);
+      setSelectionRect(null);
+      getCurrentWindow().hide();
+      if (settings.show_notifications) {
+        void showToast({
+          message: `Screenshot is saved to ${fileName}`,
+          icon: "💾",
+          action: "Open folder",
+          path: result,
+          duration_ms: 6000,
+        });
       }
     },
     [selectionRect, settings]
@@ -415,11 +608,15 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (isSettingsWindow) return;
+    if (!isCoordinatorWindow) return;
     // Toggle click-through and resize: when not capturing, window ignores cursor so other apps work
     const ignore = phase === "idle";
     invoke("set_ignore_cursor_events", { ignore }).catch(console.error);
   }, [phase]);
+
+  if (isToastWindow) {
+    return <Toast />;
+  }
 
   if (isSettingsWindow) {
     return <SettingsPanel settings={settings} onSave={handleSettingsSave} onClose={() => getCurrentWindow().close()} />;
@@ -427,7 +624,9 @@ function App() {
 
   return (
     <div style={{ width: "100%", height: "100%" }}>
-      {(phase === "selecting" || phase === "annotating") && fullScreenshot && (
+      {/* The selection overlay is transparent and never draws the captured
+          frame, so it only needs the composite once it turns into the editor. */}
+      {(phase === "selecting" || (phase === "annotating" && fullScreenshot)) && (
         <CaptureOverlay
           phase={phase}
           fullScreenshot={fullScreenshot}
@@ -441,9 +640,13 @@ function App() {
           onToolChange={setActiveTool as (tool: Tool) => void}
           onEnterAnnotate={handleEnterAnnotate}
           onCopy={handleCopy}
+          onPrint={handlePrint}
           onSaveDialog={handleSaveDialog}
           onQuickSave={handleQuickSave}
           onCancel={handleCancel}
+          previousSelection={settings.keep_selection ? settings.previous_selection : null}
+          imageFormat={settings.image_format}
+          jpegQuality={settings.jpeg_quality}
           shortcutCopy={settings.shortcut_copy}
           shortcutSave={settings.shortcut_save}
           shortcutCancel={settings.shortcut_cancel}

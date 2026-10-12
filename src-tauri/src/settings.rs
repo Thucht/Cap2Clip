@@ -32,6 +32,14 @@ pub struct SelectionGeometry {
     pub height: u32,
 }
 
+/// File format a screenshot is written in.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageFormat {
+    Png,
+    Jpeg,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     pub shortcut_region: String,
@@ -45,6 +53,15 @@ pub struct AppSettings {
     pub presets: Vec<Preset>,
     pub auto_start: bool,
     pub shortcuts: std::collections::HashMap<String, String>,
+    // Lightshot parity: "Show notifications about copying and saving".
+    pub show_notifications: bool,
+    // Lightshot parity: "Capture a cursor on a screenshot".
+    pub capture_cursor: bool,
+    // Lightshot parity: "Keep the selected area position".
+    pub keep_selection: bool,
+    // Lightshot parity: "Upload using the format" and "JPEG quality".
+    pub image_format: ImageFormat,
+    pub jpeg_quality: u8,
 }
 
 impl Default for AppSettings {
@@ -67,6 +84,11 @@ impl Default for AppSettings {
             presets: default_presets(),
             auto_start: false,
             shortcuts: std::collections::HashMap::new(),
+            show_notifications: true,
+            capture_cursor: false,
+            keep_selection: true,
+            image_format: ImageFormat::Png,
+            jpeg_quality: 90,
         }
     }
 }
@@ -287,6 +309,9 @@ pub fn load_settings() -> Result<AppSettings, String> {
     for (index, preset) in settings.presets.iter_mut().enumerate() {
         preset.order = index as u32;
     }
+    // A hand-edited or older settings file must not be able to ask for a JPEG
+    // quality the encoder would reject.
+    settings.jpeg_quality = settings.jpeg_quality.clamp(1, 100);
     Ok(settings)
 }
 
@@ -427,6 +452,112 @@ pub async fn resize_window_to_capture(
         window_height: client.height,
         scale_factor: window.scale_factor().unwrap_or(1.0),
     })
+}
+
+/// Fit the editor window so its *client area* covers the captured region.
+///
+/// The editor reuses the main window, and Windows keeps an invisible frame
+/// around a frameless one: a position of (x, y) puts the *client* area that much
+/// further down and right, so a capture asked to start at (x, y) would start a
+/// few pixels late. Sizes are applied as logical values, which Tauri's window
+/// builder uses for the client area, and only the position needs the frame
+/// correction.
+///
+/// `x`/`y`/`width`/`height` are logical pixels of the region the user selected.
+#[tauri::command]
+pub async fn fit_editor_window(
+    window: tauri::WebviewWindow,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<FitReport, String> {
+    use tauri::{LogicalPosition, LogicalSize};
+
+    let scale = window.scale_factor().unwrap_or(1.0).max(0.1);
+    let target_width = ((f64::from(width)) * scale).round().max(1.0) as i32;
+    let target_height = ((f64::from(height)) * scale).round().max(1.0) as i32;
+    let target_x = ((f64::from(x)) * scale).round() as i32;
+    let target_y = ((f64::from(y)) * scale).round() as i32;
+    let mut report = FitReport {
+        requested: (i64::from(x), i64::from(y), i64::from(width), i64::from(height)),
+        target: (target_x, target_y, target_width, target_height),
+        scale,
+        offset: (0, 0),
+        inner: (0, 0),
+        outer: (0, 0),
+        iterations: 0,
+    };
+
+    for attempt in 0..4 {
+        report.iterations = attempt + 1;
+        window
+            .set_size(LogicalSize::new(f64::from(width), f64::from(height)))
+            .map_err(|error| error.to_string())?;
+        window
+            .set_position(LogicalPosition::new(f64::from(x), f64::from(y)))
+            .map_err(|error| error.to_string())?;
+
+        // Windows applies the write on the main thread, which keeps running
+        // while this async command yields, so the rectangle is read back after
+        // a moment rather than describing the window as it was before.
+        std::thread::sleep(std::time::Duration::from_millis(30));
+
+        let (outer, inner) = match (window.outer_size(), window.inner_size()) {
+            (Ok(outer), Ok(inner)) => (outer, inner),
+            _ => break,
+        };
+        report.outer = (outer.width as i32, outer.height as i32);
+        report.inner = (inner.width as i32, inner.height as i32);
+        let (offset_x, offset_y) = match (window.inner_position(), window.outer_position()) {
+            (Ok(inner), Ok(outer)) => (inner.x - outer.x, inner.y - outer.y),
+            _ => (0, 0),
+        };
+        report.offset = (offset_x, offset_y);
+
+        if inner.width as i32 == target_width
+            && inner.height as i32 == target_height
+            && offset_x == 0
+            && offset_y == 0
+        {
+            break;
+        }
+
+        // Put the frame back where it belongs: the outer rectangle starts that
+        // much before the client area does.
+        window
+            .set_position(LogicalPosition::new(
+                f64::from(target_x - offset_x) / scale,
+                f64::from(target_y - offset_y) / scale,
+            ))
+            .map_err(|error| error.to_string())?;
+        std::thread::sleep(std::time::Duration::from_millis(30));
+
+        let inner = match window.inner_size() {
+            Ok(size) => size,
+            Err(_) => break,
+        };
+        report.inner = (inner.width as i32, inner.height as i32);
+    }
+
+    // Moving or resizing a transparent window can recreate its WebView2 child,
+    // and a recreated child comes back with an opaque white background - which
+    // is what the editor looked like when only the startup-time call was used.
+    let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
+    Ok(report)
+}
+
+/// What `fit_editor_window` actually achieved, so the editor can report a fit
+/// that did not converge instead of silently showing a cropped capture.
+#[derive(Debug, Clone, Serialize)]
+pub struct FitReport {
+    pub requested: (i64, i64, i64, i64),
+    pub target: (i32, i32, i32, i32),
+    pub scale: f64,
+    pub offset: (i32, i32),
+    pub inner: (i32, i32),
+    pub outer: (i32, i32),
+    pub iterations: i32,
 }
 
 /// Move the window so its *client area* starts at the monitor origin and covers

@@ -3,8 +3,13 @@
 
 mod capture;
 mod clipboard;
+mod print;
 mod settings;
 mod shortcuts;
+mod toast;
+
+#[cfg(target_os = "windows")]
+mod cursor;
 
 #[cfg(target_os = "windows")]
 mod dxgi_capture;
@@ -39,11 +44,15 @@ fn main() {
             capture::save_screenshot,
             capture::save_screenshots,
             capture::save_screenshots_quick,
+            capture::reveal_in_file_manager,
+            print::print_image,
+            toast::show_toast,
             settings::load_settings,
             settings::save_settings,
             settings::set_auto_start,
             settings::set_ignore_cursor_events,
             settings::resize_window_to_capture,
+            settings::fit_editor_window,
             clipboard::copy_image_to_clipboard,
         ])
         .setup(|app| {

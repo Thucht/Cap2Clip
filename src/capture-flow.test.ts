@@ -41,7 +41,7 @@ describe("capture flow ordering", () => {
   });
 
   it("orchestrates one overlay window per monitor", () => {
-    expect(app).toContain('new WebviewWindow(`capture-${monitor.monitor_id}`');
+    expect(app).toContain('const label = `capture-${monitor.monitor_id}`');
     expect(app).toContain('invoke<CaptureSession>("begin_capture_session")');
     expect(app).toContain('invoke<CaptureSession | null>("active_capture_session")');
     expect(app).toContain('"capture-session-started"');
@@ -56,7 +56,10 @@ describe("capture flow ordering", () => {
   });
 
   it("finalizes the shared selection once in the main coordinator", () => {
-    expect(app).toContain("if (overlayMonitorId !== null) return;");
+    // The per-monitor overlays and the auxiliary windows load the same App, so
+    // the finalization listener is restricted to the coordinator window.
+    expect(app).toContain("if (!isCoordinatorWindow) return;");
+    expect(app).not.toContain("if (overlayMonitorId !== null) return;");
     expect(app).toContain('"capture-selection-finalized"');
   });
   it("keeps the hotkey handler from showing the window", () => {

@@ -5,7 +5,7 @@ import type { Preset, SelectionGeometry } from "../App";
 import { SERIALIZED_CUSTOM_PROPERTIES } from "../fabric-config";
 import { matchesShortcut } from "../shortcuts";
 import {
-  IconCopy, IconSave, IconCancel, IconUndo, IconRedo, IconTrash,
+  IconCopy, IconSave, IconPrint, IconCancel, IconUndo, IconRedo, IconTrash,
   IconPen, IconLine, IconArrow, IconRect, IconEllipse, IconHighlight, IconBlur, IconText,
   IconMove, IconEdit, IconResizePreset,
 } from "./icons";
@@ -14,6 +14,7 @@ export type Tool = "move" | "edit" | "select" | "pen" | "line" | "arrow" | "rect
 
 interface AnnotationToolbarProps {
   onCopy: () => void;
+  onPrint: () => void;
   onSaveDialog: () => void;
   onCancel: () => void;
   multiRegion: boolean;
@@ -37,6 +38,7 @@ const COLORS = [
 
 export function AnnotationToolbar({
   onCopy,
+  onPrint,
   onSaveDialog,
   onCancel,
   multiRegion,
@@ -566,6 +568,7 @@ export function AnnotationToolbar({
         <div className="toolbar-section toolbar-actions-row">
           <button className="action-btn-icon" onClick={onCopy} title="Copy (Ctrl+C)"><IconCopy /></button>
           <button className="action-btn-icon" onClick={onSaveDialog} title="Save as… (choose path)"><IconSave /></button>
+          <button className="action-btn-icon" onClick={onPrint} title="Print"><IconPrint /></button>
           <label className="multi-region-toggle" title="Create and save each selected region as a separate PNG">
             <input
               type="checkbox"

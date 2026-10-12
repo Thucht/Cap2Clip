@@ -76,7 +76,18 @@ unsafe fn capture_outputs_inner() -> Result<Vec<DuplicatedOutput>, HRESULT> {
         if let Some((device, context)) = create_device(&adapter) {
             let mut output_index = 0u32;
             while let Ok(output) = adapter.EnumOutputs(output_index) {
-                if let Some(duplicated) = capture_output(&device, &context, &output) {
+                // A frame that is entirely black is what a display engine hands
+                // out when duplication raced a mode switch or an overlay driver
+                // (streaming, remote desktop) took the output over. One retry
+                // usually recovers; when it does not the output is dropped so
+                // the caller falls back to GDI instead of saving a black image.
+                let duplicated = capture_output(&device, &context, &output)
+                    .filter(|frame| !is_uniformly_black(&frame.image))
+                    .or_else(|| {
+                        capture_output(&device, &context, &output)
+                            .filter(|frame| !is_uniformly_black(&frame.image))
+                    });
+                if let Some(duplicated) = duplicated {
                     captured.push(duplicated);
                 }
                 output_index = output_index.saturating_add(1);
@@ -138,7 +149,15 @@ unsafe fn capture_output(
         return None;
     };
 
-    let frame = read_texture(device, context, &texture)?;
+    let frame = read_texture(device, context, &texture);
+
+    // Hand the frame back before anything else so the display engine is free
+    // to produce the next one. Leaving it held keeps a stale front buffer and,
+    // on a desktop that only updates when something changes, the frame read
+    // back can be an untouched (black) surface.
+    let _ = duplication.ReleaseFrame();
+
+    let frame = frame?;
     let image = orient(frame, rotation);
 
     // The composite planner indexes the source image with monitor-relative
@@ -156,27 +175,65 @@ unsafe fn capture_output(
     })
 }
 
+/// `DXGI_ERROR_WAITED_TIMEOUT`: the duplication object has no new frame yet.
+const DXGI_ERROR_WAITED_TIMEOUT: HRESULT = HRESULT(0x887A0027u32 as i32);
+
+/// True when every pixel of the frame is fully opaque black.
+///
+/// Sampling the corners and the centre is enough: a real desktop frame always
+/// differs from the untouched front buffer somewhere in the middle of the
+/// screen, while a blacked-out frame is uniform everywhere.
+fn is_uniformly_black(image: &RgbaImage) -> bool {
+    let (width, height) = (image.width(), image.height());
+    if width == 0 || height == 0 {
+        return true;
+    }
+    let probes = [
+        (0u32, 0u32),
+        (width - 1, 0),
+        (0, height - 1),
+        (width - 1, height - 1),
+        (width / 2, height / 2),
+    ];
+    probes
+        .iter()
+        .all(|&(x, y)| image.get_pixel(x, y).0[..3] == [0, 0, 0])
+}
+
 /// Acquire the current desktop frame of one output.
 ///
-/// The duplication object is dropped by the caller regardless of the outcome.
+/// A freshly created duplication object does not necessarily have a frame
+/// ready, and `AcquireNextFrame` reporting "no new frame" is not fatal: the
+/// display engine only produces one when something on the output changes, so a
+/// zero timeout loses the race on an otherwise idle desktop and the capture
+/// silently falls back to a black GDI frame. Retrying with a real budget is what
+/// makes an unchanged desktop capture as reliably as a busy one.
+///
 /// `DXGI_ERROR_ACCESS_LOST` must not be followed by `ReleaseFrame`: the object
 /// is already dead and the release would corrupt the next attempt.
 unsafe fn acquire_frame(duplication: &IDXGIOutputDuplication) -> Option<IDXGIResource> {
-    let mut frame_info = DXGI_OUTDUPL_FRAME_INFO::default();
-    let mut desktop_texture: Option<IDXGIResource> = None;
-    match duplication.AcquireNextFrame(0, &mut frame_info, &mut desktop_texture) {
-        Ok(()) => {
-            let texture = desktop_texture.and_then(|resource| resource.cast().ok());
-            if texture.is_none() {
-                // Hand the frame back, otherwise the next AcquireNextFrame
-                // blocks until its timeout expires.
-                let _ = duplication.ReleaseFrame();
+    // Short waits, repeated: a frame is usually available within one display
+    // refresh, and giving up quickly keeps the capture responsive when the
+    // output really cannot be duplicated.
+    for timeout_ms in [16u32, 48, 120, 250] {
+        let mut frame_info = DXGI_OUTDUPL_FRAME_INFO::default();
+        let mut desktop_texture: Option<IDXGIResource> = None;
+        match duplication.AcquireNextFrame(timeout_ms, &mut frame_info, &mut desktop_texture) {
+            Ok(()) => {
+                let texture = desktop_texture.and_then(|resource| resource.cast().ok());
+                if texture.is_none() {
+                    // Hand the frame back, otherwise the next AcquireNextFrame
+                    // blocks until its timeout expires.
+                    let _ = duplication.ReleaseFrame();
+                }
+                return texture;
             }
-            texture
+            Err(error) if error.code() == DXGI_ERROR_ACCESS_LOST => return None,
+            Err(error) if error.code() == DXGI_ERROR_WAITED_TIMEOUT => continue,
+            Err(_) => return None,
         }
-        Err(error) if error.code() == DXGI_ERROR_ACCESS_LOST => None,
-        Err(_) => None,
     }
+    None
 }
 
 /// A duplicated texture staged into CPU-readable memory, still in the panel's
@@ -341,7 +398,7 @@ fn rotate_half_turn(source: &RgbaImage) -> RgbaImage {
 
 #[cfg(test)]
 mod tests {
-    use super::{rotate_clockwise, rotate_counter_clockwise, rotate_half_turn};
+    use super::{is_uniformly_black, rotate_clockwise, rotate_counter_clockwise, rotate_half_turn};
     use screenshots::image::{Rgba, RgbaImage};
 
     fn gradient(width: u32, height: u32) -> RgbaImage {
@@ -379,5 +436,19 @@ mod tests {
         let twice = rotate_half_turn(&once);
         assert_eq!(twice.as_raw(), source.as_raw());
         assert_ne!(once.as_raw(), source.as_raw());
+    }
+
+    #[test]
+    fn an_untouched_front_buffer_is_treated_as_black() {
+        let blank = RgbaImage::from_pixel(4, 4, Rgba([0, 0, 0, 255]));
+        assert!(is_uniformly_black(&blank));
+
+        // The frame a display engine hands back after a lost duplication can
+        // still carry an alpha channel, so the check must not depend on it.
+        let transparent = RgbaImage::from_pixel(4, 4, Rgba([0, 0, 0, 0]));
+        assert!(is_uniformly_black(&transparent));
+
+        let wallpaper = gradient(4, 4);
+        assert!(!is_uniformly_black(&wallpaper));
     }
 }
