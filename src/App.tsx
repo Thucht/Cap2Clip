@@ -12,6 +12,7 @@ import type { CaptureWindowGeometry } from "./geometry";
 import { monitorPhysicalRectToLogical } from "./capture-session";
 import { overlayMonitorId } from "./app-context";
 import type { CaptureSession, MonitorCapture } from "./capture-session";
+import { preselectedRegion, rememberedSelection, savedFile, shouldNotify } from "./parity-rules";
 
 export interface Preset {
   id: string;
@@ -461,8 +462,9 @@ function App() {
         console.error("Copy failed:", e);
       }
       // Lightshot only remembers the region when the user asked for it.
-      const updated = settings.keep_selection && selectionRect
-        ? { ...settings, previous_selection: selectionRect }
+      const remembered = rememberedSelection(settings, selectionRect);
+      const updated = remembered !== settings.previous_selection
+        ? { ...settings, previous_selection: remembered }
         : settings;
       if (updated !== settings) {
         setSettings(updated);
@@ -473,7 +475,7 @@ function App() {
       setCaptureGeometry(null);
       setSelectionRect(null);
       getCurrentWindow().hide();
-      if (copied && settings.show_notifications) {
+      if (shouldNotify(settings, copied)) {
         void showToast({ message: "Your screenshot is copied to clipboard", icon: "⧉" });
       }
     },
@@ -502,11 +504,10 @@ function App() {
         console.error("Save dialog failed or was cancelled:", e);
         return;
       }
-      const dir = savedPath.substring(0, Math.max(savedPath.lastIndexOf("\\"), savedPath.lastIndexOf("/")) + 1);
-      const fileName = savedPath.substring(savedPath.lastIndexOf("\\") + 1, savedPath.lastIndexOf("."));
+      const { dir, name: fileName } = savedFile(savedPath);
       const updated = {
         ...settings,
-        previous_selection: settings.keep_selection ? selectionRect : settings.previous_selection,
+        previous_selection: rememberedSelection(settings, selectionRect),
         last_save_dir: dir || settings.last_save_dir,
       };
       setSettings(updated);
@@ -516,7 +517,7 @@ function App() {
       setCaptureGeometry(null);
       setSelectionRect(null);
       getCurrentWindow().hide();
-      if (settings.show_notifications) {
+      if (shouldNotify(settings)) {
         void showToast({
           message: `Screenshot is saved to ${fileName}`,
           icon: "💾",
@@ -542,11 +543,10 @@ function App() {
         console.error("Quick save failed:", e);
         return;
       }
-      const dir = result.substring(0, Math.max(result.lastIndexOf("\\"), result.lastIndexOf("/")) + 1);
-      const fileName = result.substring(result.lastIndexOf("\\") + 1, result.lastIndexOf("."));
+      const { dir, name: fileName } = savedFile(result);
       const updated = {
         ...settings,
-        previous_selection: settings.keep_selection ? selectionRect : settings.previous_selection,
+        previous_selection: rememberedSelection(settings, selectionRect),
         last_save_dir: dir || settings.last_save_dir,
       };
       setSettings(updated);
@@ -556,7 +556,7 @@ function App() {
       setCaptureGeometry(null);
       setSelectionRect(null);
       getCurrentWindow().hide();
-      if (settings.show_notifications) {
+      if (shouldNotify(settings)) {
         void showToast({
           message: `Screenshot is saved to ${fileName}`,
           icon: "💾",
@@ -644,7 +644,7 @@ function App() {
           onSaveDialog={handleSaveDialog}
           onQuickSave={handleQuickSave}
           onCancel={handleCancel}
-          previousSelection={settings.keep_selection ? settings.previous_selection : null}
+          previousSelection={preselectedRegion(settings)}
           imageFormat={settings.image_format}
           jpegQuality={settings.jpeg_quality}
           shortcutCopy={settings.shortcut_copy}

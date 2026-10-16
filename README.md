@@ -197,6 +197,11 @@ Settings are stored in:
 - **Windows**: `%APPDATA%/cap2clip/settings.json`
 - **macOS**: `~/Library/Application Support/cap2clip/settings.json`
 
+Builds from before the rename wrote the same file under
+`%APPDATA%/screenshot-app/settings.json`. The current build copies that file
+into the location above the first time it loads or saves settings, and leaves
+the original in place so an older build still starts.
+
 ### Settings Fields
 
 ```json
@@ -210,9 +215,21 @@ Settings are stored in:
   "last_save_dir": "C:\\Users\\You\\Pictures\\Screenshots",
   "previous_selection": null,
   "presets": [...],
-  "auto_start": false
+  "auto_start": false,
+  "show_notifications": true,
+  "capture_cursor": false,
+  "keep_selection": true,
+  "image_format": "png",
+  "jpeg_quality": 90
 }
 ```
+
+`show_notifications`, `capture_cursor`, `keep_selection`, `image_format` and
+`jpeg_quality` are the Lightshot-parity settings; see
+[docs/LIGHTSHOT-PARITY.md](docs/LIGHTSHOT-PARITY.md) for how each one maps onto
+the real Lightshot option. A settings file written by an older build is loaded
+by filling in whatever of these keys it predates, so hand-edited files never
+lose the rest of their contents.
 
 ## Known Issues
 

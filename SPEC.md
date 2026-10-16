@@ -1,5 +1,10 @@
 # Lightshot Clone - Specification
 
+> **Status: original design spec, kept for history.** The shipped product is
+> Cap2Clip. Current behaviour, settings layout and file tree live in
+> [README.md](README.md) and the code; where this document disagrees with them,
+> they are authoritative.
+
 ## 1. Project Overview
 
 **Project Name**: Lightshot Clone  
@@ -178,6 +183,10 @@ Export (save/clipboard via Rust)
 
 ## 6. File Structure
 
+> Historical: this is the tree proposed at design time. The shipped tree uses
+> different names (for example `CaptureOverlay.tsx`, `SettingsPanel.tsx`,
+> `settings.rs`, `dxgi_capture.rs`); README.md describes what is really there.
+
 ```
 lightshot-clone/
 ├── src/                          # React frontend
@@ -207,7 +216,14 @@ lightshot-clone/
 
 ## 7. Configuration
 
-**Preset Storage**: `%APPDATA%/lightshot-clone/presets.json`
+**Preset Storage**: presets are not a separate file. They are the `presets`
+array inside the settings file:
+
+- Windows: `%APPDATA%/cap2clip/settings.json`
+- macOS: `~/Library/Application Support/cap2clip/settings.json`
+
+Builds from before the rename wrote it under `%APPDATA%/screenshot-app/`; the
+current build copies that file once, on the first load or save.
 
 ```json
 {
@@ -220,6 +236,10 @@ lightshot-clone/
 ```
 
 ## 8. Out of Scope (Not Implemented)
+
+> Historical: several items below have since shipped or been re-scoped.
+> Multi-monitor and mixed-DPI support shipped; see the multi-monitor section of
+> README.md. Cloud upload and sharing remain out of scope.
 
 - User login/authentication
 - Cloud upload

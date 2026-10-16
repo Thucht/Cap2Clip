@@ -119,16 +119,12 @@ fn capture_monitor_pixels(
     // desktop that owns it, which is the monitor it is physically on.
     if let Ok(settings) = crate::settings::load_settings() {
         if settings.capture_cursor {
-            if let Some((cursor_x, cursor_y)) = crate::cursor::cursor_position() {
-                let inside = cursor_x >= info.x
-                    && cursor_y >= info.y
-                    && cursor_x < info.x + info.width as i32
-                    && cursor_y < info.y + info.height as i32;
-                if inside {
+            if let Some(cursor) = crate::cursor::cursor_position() {
+                if cursor_is_on_monitor(cursor, (info.x, info.y, info.width, info.height)) {
                     crate::cursor::draw_cursor(
                         &mut image,
                         (info.x, info.y),
-                        (cursor_x, cursor_y),
+                        cursor,
                         f64::from(info.scale_factor),
                     );
                 }
@@ -136,6 +132,17 @@ fn capture_monitor_pixels(
         }
     }
     Ok(image)
+}
+
+/// True when the pointer belongs in this monitor's image.
+///
+/// Desktop-space origins go negative for a monitor placed left of or above the
+/// primary one, and the right and bottom edges are exclusive, so a cursor that
+/// sits exactly on a shared boundary is drawn once, on the monitor that owns it.
+fn cursor_is_on_monitor(cursor: (i32, i32), monitor: (i32, i32, u32, u32)) -> bool {
+    let (cursor_x, cursor_y) = cursor;
+    let (x, y, width, height) = monitor;
+    cursor_x >= x && cursor_y >= y && cursor_x < x + width as i32 && cursor_y < y + height as i32
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -599,8 +606,8 @@ pub fn capture_full_screen(app: AppHandle) -> Result<CaptureResult, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_composite_plan, decode_image_data_url, image_extension, render_composite,
-        CapturedMonitor, LogicalRect, MonitorCapture, MonitorGeometry,
+        build_composite_plan, cursor_is_on_monitor, decode_image_data_url, image_extension,
+        render_composite, CapturedMonitor, LogicalRect, MonitorCapture, MonitorGeometry,
     };
 
     fn monitor(x: f64, y: f64, width: f64, height: f64, scale: f64) -> MonitorGeometry {
@@ -613,6 +620,24 @@ mod tests {
             physical_width: (width * scale).round() as u32,
             physical_height: (height * scale).round() as u32,
         }
+    }
+
+    #[test]
+    fn the_cursor_is_drawn_once_on_the_monitor_that_physically_owns_it() {
+        // A monitor placed to the left of the primary one has a negative origin.
+        let left_of_primary = (-1920, 0, 1920, 1080);
+        let primary = (0, 0, 1920, 1080);
+
+        assert!(cursor_is_on_monitor((-100, 20), left_of_primary));
+        assert!(!cursor_is_on_monitor((-100, 20), primary));
+
+        // On the shared edge only the right-hand monitor claims the pointer.
+        assert!(!cursor_is_on_monitor((0, 0), left_of_primary));
+        assert!(cursor_is_on_monitor((0, 0), primary));
+
+        // The bottom-right corner is exclusive, the pixel before it is inside.
+        assert!(cursor_is_on_monitor((1919, 1079), primary));
+        assert!(!cursor_is_on_monitor((1920, 1080), primary));
     }
 
     #[test]

@@ -1,6 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Directory the settings file lives in, under the OS config directory.
+const SETTINGS_DIR: &str = "cap2clip";
+
+/// Directory the pre-rename builds wrote. Kept only so existing installs can be
+/// migrated; nothing reads it once the current file exists.
+const LEGACY_SETTINGS_DIR: &str = "screenshot-app";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -278,25 +285,72 @@ fn default_presets() -> Vec<Preset> {
 }
 
 fn get_settings_path() -> PathBuf {
-    let config_dir = dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("screenshot-app");
+    let config_dir = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+    let path = settings_path_in(&config_dir);
 
-    fs::create_dir_all(&config_dir).ok();
-    config_dir.join("settings.json")
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    path
+}
+
+/// Layout of the current settings file inside an OS config directory. Kept
+/// separate from `get_settings_path` so the documented location can be checked
+/// without touching the real profile.
+fn settings_path_in(config_dir: &Path) -> PathBuf {
+    config_dir.join(SETTINGS_DIR).join("settings.json")
+}
+
+/// Where the pre-rename builds kept the same file.
+fn get_legacy_settings_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|config_dir| legacy_settings_path_in(&config_dir))
+}
+
+fn legacy_settings_path_in(config_dir: &Path) -> PathBuf {
+    config_dir.join(LEGACY_SETTINGS_DIR).join("settings.json")
+}
+
+/// Copy the pre-rename settings file into the current location once, so an
+/// install that already has one keeps its presets, shortcuts and last save
+/// directory after the directory was renamed. The legacy file is left where it
+/// is: an older build can still be launched, and deleting the only copy the user
+/// may have hand-edited is worse than leaving a duplicate behind.
+///
+/// Returns whether a copy was made.
+fn migrate_legacy_settings(current: &Path, legacy: Option<&Path>) -> bool {
+    if current.exists() {
+        return false;
+    }
+    let legacy = match legacy {
+        Some(path) if path.is_file() => path,
+        _ => return false,
+    };
+    if let Some(parent) = current.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    fs::copy(legacy, current).is_ok()
 }
 
 #[tauri::command]
 pub fn load_settings() -> Result<AppSettings, String> {
     let path = get_settings_path();
+    migrate_legacy_settings(&path, get_legacy_settings_path().as_deref());
 
     if !path.exists() {
         return Ok(AppSettings::default());
     }
 
     let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let mut value: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    let value: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    settings_from_value(value)
+}
+
+/// Turns whatever was on disk into settings: fills in the keys the file predates,
+/// restores the built-in presets when none of them survived, and rejects values
+/// the encoders would refuse.
+fn settings_from_value(value: serde_json::Value) -> Result<AppSettings, String> {
     let defaults = serde_json::to_value(AppSettings::default()).map_err(|e| e.to_string())?;
+    let mut value = value;
 
     // Merge defaults recursively so settings files from older versions remain
     // loadable when new fields are added (notably the configurable shortcuts).
@@ -339,6 +393,10 @@ pub async fn save_settings(app: tauri::AppHandle, settings: AppSettings) -> Resu
     crate::shortcuts::apply(&app, &settings)?;
 
     let path = get_settings_path();
+    // A settings window can be saved before anything has ever been loaded, so
+    // the legacy file is migrated here too; the guard inside makes the call a
+    // no-op once the current file exists.
+    migrate_legacy_settings(&path, get_legacy_settings_path().as_deref());
     let content = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     fs::write(&path, content).map_err(|e| e.to_string())
 }
@@ -601,4 +659,162 @@ fn apply_capture_rect(
         width: size.width,
         height: size.height,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        default_presets, legacy_settings_path_in, migrate_legacy_settings, settings_from_value,
+        settings_path_in, ImageFormat, LEGACY_SETTINGS_DIR, SETTINGS_DIR,
+    };
+    use serde_json::json;
+    use std::fs;
+    use std::path::PathBuf;
+
+    /// A settings file written before the Lightshot parity fields existed, which
+    /// is what the installs that upgraded from an older build look like.
+    fn pre_parity_file() -> serde_json::Value {
+        json!({
+            "shortcut_region": "PrintScreen",
+            "shortcut_fullscreen": "Shift+PrintScreen",
+            "shortcut_copy": "Ctrl+C",
+            "shortcut_save": "Ctrl+S",
+            "shortcut_cancel": "Escape",
+            "shortcuts_enabled": true,
+            "last_save_dir": "C:\\Users\\someone\\Pictures\\Screenshots",
+            "previous_selection": null,
+            "presets": [],
+            "auto_start": false,
+            "shortcuts": {}
+        })
+    }
+
+    #[test]
+    fn settings_live_in_the_directory_the_docs_advertise() {
+        let root = PathBuf::from("C:\\Users\\someone\\AppData\\Roaming");
+        assert_eq!(
+            settings_path_in(&root),
+            PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\cap2clip\\settings.json")
+        );
+        assert_eq!(
+            legacy_settings_path_in(&root),
+            PathBuf::from("C:\\Users\\someone\\AppData\\Roaming\\screenshot-app\\settings.json")
+        );
+        assert_eq!(SETTINGS_DIR, "cap2clip");
+        assert_eq!(LEGACY_SETTINGS_DIR, "screenshot-app");
+    }
+
+    #[test]
+    fn a_pre_parity_settings_file_gets_the_parity_defaults() {
+        let settings = settings_from_value(pre_parity_file()).expect("pre-parity file must load");
+        assert!(settings.show_notifications);
+        assert!(!settings.capture_cursor);
+        assert!(settings.keep_selection);
+        assert_eq!(settings.image_format, ImageFormat::Png);
+        assert_eq!(settings.jpeg_quality, 90);
+    }
+
+    #[test]
+    fn a_pre_parity_settings_file_gets_the_built_in_presets_back() {
+        let settings = settings_from_value(pre_parity_file()).expect("pre-parity file must load");
+        assert_eq!(settings.presets.len(), default_presets().len());
+        let orders: Vec<u32> = settings.presets.iter().map(|preset| preset.order).collect();
+        assert_eq!(orders, (0..orders.len() as u32).collect::<Vec<u32>>());
+    }
+
+    #[test]
+    fn parity_values_that_were_saved_are_read_back() {
+        let settings = settings_from_value(json!({
+            "show_notifications": false,
+            "capture_cursor": true,
+            "keep_selection": false,
+            "image_format": "jpeg",
+            "jpeg_quality": 60
+        }))
+        .expect("settings file with parity keys must load");
+
+        assert!(!settings.show_notifications);
+        assert!(settings.capture_cursor);
+        assert!(!settings.keep_selection);
+        assert_eq!(settings.image_format, ImageFormat::Jpeg);
+        assert_eq!(settings.jpeg_quality, 60);
+    }
+
+    #[test]
+    fn jpeg_quality_outside_the_encoder_range_is_clamped() {
+        let low = settings_from_value(json!({ "jpeg_quality": 0 })).expect("loads");
+        assert_eq!(low.jpeg_quality, 1);
+
+        let high = settings_from_value(json!({ "jpeg_quality": 255 })).expect("loads");
+        assert_eq!(high.jpeg_quality, 100);
+    }
+
+    /// Scratch directory per test so the suite never reads the real profile.
+    fn scratch_dir(tag: &str) -> PathBuf {
+        let unique = format!(
+            "cap2clip-settings-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.subsec_nanos())
+                .unwrap_or(0)
+        );
+        let path = std::env::temp_dir().join(unique).join(tag);
+        fs::create_dir_all(&path).expect("scratch directory");
+        path
+    }
+
+    #[test]
+    fn legacy_settings_are_copied_once_and_left_in_place() {
+        let dir = scratch_dir("migrate");
+        let root = dir.join("Roaming");
+        let legacy = legacy_settings_path_in(&root);
+        let current = settings_path_in(&root);
+        fs::create_dir_all(legacy.parent().expect("legacy directory")).expect("legacy directory");
+        fs::write(&legacy, r#"{"shortcut_region":"Ctrl+P"}"#).expect("legacy settings file");
+
+        assert!(migrate_legacy_settings(&current, Some(&legacy)));
+        assert_eq!(
+            fs::read_to_string(&current).expect("migrated settings file"),
+            r#"{"shortcut_region":"Ctrl+P"}"#
+        );
+        // An older build can still be launched, so its own file has to survive.
+        assert!(legacy.is_file());
+
+        // The next start must not copy over anything again.
+        assert!(!migrate_legacy_settings(&current, Some(&legacy)));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn migration_never_overwrites_a_file_that_already_exists() {
+        let dir = scratch_dir("no-clobber");
+        let root = dir.join("Roaming");
+        let legacy = legacy_settings_path_in(&root);
+        let current = settings_path_in(&root);
+        fs::create_dir_all(legacy.parent().expect("legacy directory")).expect("legacy directory");
+        fs::create_dir_all(current.parent().expect("settings directory")).expect("settings directory");
+        fs::write(&legacy, r#"{"shortcut_region":"Ctrl+P"}"#).expect("legacy settings file");
+        fs::write(&current, r#"{"shortcut_region":"PrintScreen"}"#).expect("settings file");
+
+        assert!(!migrate_legacy_settings(&current, Some(&legacy)));
+        assert_eq!(
+            fs::read_to_string(&current).expect("settings file"),
+            r#"{"shortcut_region":"PrintScreen"}"#
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn migration_is_a_no_op_without_a_legacy_file() {
+        let dir = scratch_dir("no-legacy");
+        let root = dir.join("Roaming");
+        let legacy = legacy_settings_path_in(&root);
+        let current = settings_path_in(&root);
+
+        assert!(!migrate_legacy_settings(&current, Some(&legacy)));
+        assert!(!migrate_legacy_settings(&current, None));
+        assert!(!current.exists());
+        fs::remove_dir_all(&dir).ok();
+    }
 }
